@@ -266,10 +266,13 @@ public class KernelCodeAnalyzer {
             codeSnippet.append(fileLines.get(i)).append("\n");
         }
         
+        // 使用从AST中提取的真实名称，如果没有则使用传入的concept
+        String actualName = element.name != null ? element.name : concept;
+        
         String explanation = String.format(
             "通过Eclipse CDT工具找到%s `%s` 的完整定义。文件: %s, 第%d-%d行。",
             element.type,
-            concept,
+            actualName,
             filePath,
             startLine,
             endLine
@@ -277,6 +280,7 @@ public class KernelCodeAnalyzer {
         
         return new CodeSearchResultDTO(
             filePath,
+            actualName,
             codeSnippet.toString().trim(),
             startLine,
             startLine,
@@ -292,11 +296,13 @@ public class KernelCodeAnalyzer {
      */
     private static class CodeElement {
         final String type;
+        final String name;  // 添加名称字段
         final int startLine;
         final int endLine;
         
-        CodeElement(String type, int startLine, int endLine) {
+        CodeElement(String type, String name, int startLine, int endLine) {
             this.type = type;
+            this.name = name;
             this.startLine = startLine;
             this.endLine = endLine;
         }
@@ -323,7 +329,8 @@ public class KernelCodeAnalyzer {
                 
                 if (targetLine >= startLine && targetLine <= endLine) {
                     String type = getDeclarationType(declaration);
-                    foundElement = new CodeElement(type, startLine, endLine);
+                    String name = extractDeclarationName(declaration);  // 提取真实名称
+                    foundElement = new CodeElement(type, name, startLine, endLine);
                     return PROCESS_ABORT;
                 }
             }
@@ -356,6 +363,7 @@ public class KernelCodeAnalyzer {
                     String type = getDeclarationType(declaration);
                     foundElement = new CodeElement(
                         type, 
+                        name,  // 使用提取的真实名称
                         location.getStartingLineNumber(), 
                         location.getEndingLineNumber()
                     );
@@ -382,6 +390,22 @@ public class KernelCodeAnalyzer {
             }
         } else if (declaration instanceof IASTSimpleDeclaration) {
             IASTSimpleDeclaration simple = (IASTSimpleDeclaration) declaration;
+            IASTDeclSpecifier declSpec = simple.getDeclSpecifier();
+            
+            // 对于结构体、联合体、枚举，名称在DeclSpecifier中
+            if (declSpec instanceof IASTCompositeTypeSpecifier) {
+                IASTCompositeTypeSpecifier composite = (IASTCompositeTypeSpecifier) declSpec;
+                if (composite.getName() != null) {
+                    return composite.getName().toString();
+                }
+            } else if (declSpec instanceof IASTEnumerationSpecifier) {
+                IASTEnumerationSpecifier enumSpec = (IASTEnumerationSpecifier) declSpec;
+                if (enumSpec.getName() != null) {
+                    return enumSpec.getName().toString();
+                }
+            }
+            
+            // 对于变量声明、typedef等，名称在Declarator中
             IASTDeclarator[] declarators = simple.getDeclarators();
             if (declarators.length > 0 && declarators[0].getName() != null) {
                 return declarators[0].getName().toString();
@@ -460,13 +484,24 @@ public class KernelCodeAnalyzer {
             String fileContent = new String(fileContentBytes);
             List<String> fileLines = Arrays.asList(fileContent.split("\\R"));
             
-            IASTFileLocation location = targetComment.getFileLocation();
-            int startLine = location.getStartingLineNumber();
-            int endLine = location.getEndingLineNumber();
+            IASTFileLocation commentLocation = targetComment.getFileLocation();
+            int startLine = commentLocation.getStartingLineNumber();
+            int endLine = commentLocation.getEndingLineNumber();
 
             StringBuilder commentContent = new StringBuilder();
             for (int i = startLine - 1; i < endLine && i < fileLines.size(); i++) {
                 commentContent.append(fileLines.get(i)).append("\n");
+            }
+
+            // 尝试找到注释后面的代码元素以获取名称
+            String elementName = concept; // 默认使用传入的concept
+            String elementType = "documentation";
+            
+            // 查找注释后面的第一个代码元素
+            CodeElement followingElement = findElementAfterLine(translationUnit, endLine);
+            if (followingElement != null) {
+                elementName = followingElement.name != null ? followingElement.name : concept;
+                elementType = "documentation_for_" + followingElement.type;
             }
 
             String explanation = String.format(
@@ -474,23 +509,72 @@ public class KernelCodeAnalyzer {
                 filePath,
                 startLine,
                 endLine,
-                concept
+                elementName
             );
 
             return new CodeSearchResultDTO(
                 filePath,
+                elementName,
                 commentContent.toString(),
                 startLine,
                 startLine,
                 endLine,
                 explanation,
                 version,
-                "documentation"
+                elementType
             );
 
         } catch (Exception e) {
             logger.warn("查找注释块失败: file={}, line={}, error={}", filePath, lineNumber, e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * 查找指定行号之后的第一个代码元素
+     * 
+     * @param translationUnit AST根节点
+     * @param afterLine 指定行号
+     * @return CodeElement 找到的代码元素，如果未找到则返回null
+     */
+    private static CodeElement findElementAfterLine(IASTTranslationUnit translationUnit, int afterLine) {
+        ElementAfterLineFinder finder = new ElementAfterLineFinder(afterLine);
+        translationUnit.accept(finder);
+        return finder.getFoundElement();
+    }
+
+    /**
+     * 查找指定行号之后的第一个元素的查找器
+     */
+    private static class ElementAfterLineFinder extends ASTVisitor {
+        private final int afterLine;
+        private CodeElement foundElement;
+        
+        ElementAfterLineFinder(int afterLine) {
+            this.afterLine = afterLine;
+            this.shouldVisitDeclarations = true;
+        }
+        
+        @Override
+        public int visit(IASTDeclaration declaration) {
+            IASTFileLocation location = declaration.getFileLocation();
+            if (location != null) {
+                int startLine = location.getStartingLineNumber();
+                
+                // 找到注释后面紧跟的第一个代码元素
+                if (startLine > afterLine) {
+                    if (foundElement == null || startLine < foundElement.startLine) {
+                        String type = getDeclarationType(declaration);
+                        String name = extractDeclarationName(declaration);
+                        foundElement = new CodeElement(type, name, startLine, location.getEndingLineNumber());
+                    }
+                }
+            }
+            return PROCESS_CONTINUE;
+        }
+        
+        CodeElement getFoundElement() {
+            return foundElement;
         }
     }
 }

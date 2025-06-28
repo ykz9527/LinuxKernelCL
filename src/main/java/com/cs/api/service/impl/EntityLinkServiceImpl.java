@@ -291,6 +291,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         
         return new CodeSearchResultDTO(
             "doc/" + doc.getPath(),
+            concept,
             documentContent,
             1,
             1,

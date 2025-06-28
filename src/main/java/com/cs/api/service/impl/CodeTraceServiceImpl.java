@@ -32,12 +32,6 @@ public class CodeTraceServiceImpl implements CodeTraceService {
 
     private static final Logger logger = LoggerFactory.getLogger(CodeTraceServiceImpl.class);
 
-    // 支持的版本列表（示例数据）
-    private static final List<String> SUPPORTED_VERSIONS = Arrays.asList(
-        "v6.8", "v6.7", "v6.6", "v6.5", "v6.4", "v6.3", "v6.2", "v6.1", "v6.0",
-        "v5.19-rc4", "v5.19", "v5.18", "v5.17", "v5.16", "v5.15"
-    );
-
     /**
      * 外部tracker API的基础URL
      * 可以通过application.yml配置文件进行配置
@@ -145,17 +139,7 @@ public class CodeTraceServiceImpl implements CodeTraceService {
             return new CodeTraceResponseDTO("追溯过程中发生错误: " + e.getMessage());
         }
     }
-
-    @Override
-    public List<String> getSupportedVersions() {
-        return new ArrayList<>(SUPPORTED_VERSIONS);
-    }
-
-    @Override
-    public boolean isVersionSupported(String version) {
-        return version != null && SUPPORTED_VERSIONS.contains(version);
-    }
-
+    
     /**
      * 调用外部tracker API获取commit历史
      * 

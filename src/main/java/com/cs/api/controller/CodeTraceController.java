@@ -15,8 +15,6 @@ import com.cs.api.dto.CodeTraceRequestDTO;
 import com.cs.api.dto.CodeTraceResponseDTO;
 import com.cs.api.service.CodeTraceService;
 
-import java.util.List;
-
 /**
  * Linux内核代码追溯控制器
  * 提供函数和结构体的演化历史追溯功能
@@ -25,6 +23,7 @@ import java.util.List;
  * @since 1.0.0
  */
 @RestController
+@CrossOrigin(origins = "*", allowedHeaders = "*")
 @RequestMapping("/api/code-trace")
 @Tag(name = "代码追溯", description = "Linux内核代码演化历史追溯相关接口")
 public class CodeTraceController {
@@ -85,58 +84,6 @@ public class CodeTraceController {
     }
     
     /**
-     * 获取支持的版本列表
-     */
-    @GetMapping("/versions")
-    @Operation(
-        summary = "获取支持的版本列表",
-        description = "获取当前系统支持的Linux内核版本列表"
-    )
-    @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "获取成功"),
-        @ApiResponse(responseCode = "500", description = "服务器内部错误")
-    })
-    public Result<List<String>> getSupportedVersions() {
-        logger.info("获取支持的版本列表");
-        
-        try {
-            List<String> versions = codeTraceService.getSupportedVersions();
-            logger.info("成功获取{}个支持的版本", versions.size());
-            return Result.success(versions);
-            
-        } catch (Exception e) {
-            logger.error("获取支持版本列表时发生异常", e);
-            return Result.error(500, "获取版本列表失败: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * 检查版本是否支持
-     */
-    @GetMapping("/versions/{version}/check")
-    @Operation(
-        summary = "检查版本支持情况",
-        description = "检查指定的Linux内核版本是否被系统支持"
-    )
-    @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "检查完成"),
-        @ApiResponse(responseCode = "500", description = "服务器内部错误")
-    })
-    public Result<Boolean> checkVersionSupport(@PathVariable String version) {
-        logger.info("检查版本支持情况: {}", version);
-        
-        try {
-            boolean isSupported = codeTraceService.isVersionSupported(version);
-            logger.info("版本{}支持情况: {}", version, isSupported);
-            return Result.success(isSupported);
-            
-        } catch (Exception e) {
-            logger.error("检查版本支持情况时发生异常: version=" + version, e);
-            return Result.error(500, "检查版本支持情况失败: " + e.getMessage());
-        }
-    }
-    
-    /**
      * 健康检查接口
      */
     @GetMapping("/health")
@@ -153,12 +100,7 @@ public class CodeTraceController {
         
         try {
             // 简单的健康检查逻辑
-            List<String> versions = codeTraceService.getSupportedVersions();
-            if (versions != null && !versions.isEmpty()) {
-                return Result.success("代码追溯服务运行正常");
-            } else {
-                return Result.error(503, "代码追溯服务配置异常");
-            }
+            return Result.success("代码追溯服务运行正常");
             
         } catch (Exception e) {
             logger.error("健康检查失败", e);

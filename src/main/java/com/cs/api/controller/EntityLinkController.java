@@ -30,6 +30,7 @@ import java.util.List;
  * @since 1.0.0
  */
 @RestController
+@CrossOrigin(origins = "*", allowedHeaders = "*")
 @RequestMapping("/api/entity-link")
 @Tag(name = "概念链接", description = "概念链接相关信息的接口")
 public class EntityLinkController {

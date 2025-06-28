@@ -14,6 +14,9 @@ public class CodeSearchResultDTO {
     @Schema(description = "文件路径", example = "kernel/sched/fair.c")
     private String filePath;
 
+    @Schema(description = "元素名称", example = "fair_sched_class")
+    private String elementName;
+
     @Schema(description = "代码片段")
     private String codeSnippet;
 
@@ -38,9 +41,10 @@ public class CodeSearchResultDTO {
     public CodeSearchResultDTO() {
     }
 
-    public CodeSearchResultDTO(String filePath, String codeSnippet, Integer startLine, 
+    public CodeSearchResultDTO(String filePath, String elementName, String codeSnippet, Integer startLine, 
                                Integer targetLine, Integer endLine, String explanation, String version, String type) {
         this.filePath = filePath;
+        this.elementName = elementName;
         this.codeSnippet = codeSnippet;
         this.startLine = startLine;
         this.targetLine = targetLine;
@@ -69,6 +73,14 @@ public class CodeSearchResultDTO {
 
     public void setFilePath(String filePath) {
         this.filePath = filePath;
+    }
+
+    public String getElementName() {
+        return elementName;
+    }
+
+    public void setElementName(String elementName) {
+        this.elementName = elementName;
     }
 
     public String getCodeSnippet() {
@@ -131,6 +143,7 @@ public class CodeSearchResultDTO {
     public String toString() {
         return "CodeSearchResultDTO{" +
                 "filePath='" + filePath + '\'' +
+                ", elementName='" + elementName + '\'' +
                 ", codeSnippet='" + codeSnippet + '\'' +
                 ", startLine=" + startLine +
                 ", targetLine=" + targetLine +

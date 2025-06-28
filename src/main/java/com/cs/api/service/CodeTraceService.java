@@ -2,7 +2,6 @@ package com.cs.api.service;
 
 import com.cs.api.dto.CodeTraceResponseDTO;
 
-import java.util.List;
 
 /**
  * 代码追溯服务接口
@@ -24,18 +23,4 @@ public interface CodeTraceService {
      */
     CodeTraceResponseDTO traceMethodHistory(String filePath, String methodName, String version, String targetCommit);
 
-    /**
-     * 获取支持的版本列表
-     * 
-     * @return 支持的版本列表
-     */
-    List<String> getSupportedVersions();
-
-    /**
-     * 检查指定版本是否支持
-     * 
-     * @param version 版本号
-     * @return 是否支持该版本
-     */
-    boolean isVersionSupported(String version);
 }
