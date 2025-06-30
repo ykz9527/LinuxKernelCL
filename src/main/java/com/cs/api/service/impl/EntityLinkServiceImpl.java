@@ -11,6 +11,8 @@ import com.cs.api.common.ai.Prompt;
 import com.cs.api.dto.BootlinSearchResultDTO;
 import com.cs.api.dto.CodeSearchResultDTO;
 import com.cs.api.dto.ConceptExplanationResultDTO;
+import com.cs.api.dto.ConceptRelationshipResultDTO;
+import com.cs.api.dto.ConceptValidationResultDTO;
 import com.cs.api.dto.TripleSearchResultDTO;
 import com.cs.api.dto.KernelFeatureDTO;
 import com.cs.api.dto.EntityExtractionDTO;
@@ -676,9 +678,699 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             throw new RuntimeException("实体数据导入服务失败: " + e.getMessage(), e);
         }
     }
-    
 
+    @Override
+    public ConceptRelationshipResultDTO analyzeConceptRelationships(String concept, String context, Integer analysisDepth) {
+        logger.info("开始概念关系分析: concept={}, context={}, analysisDepth={}", concept, context, analysisDepth);
+        
+        if (analysisDepth == null || analysisDepth < 1 || analysisDepth > 3) {
+            analysisDepth = 2; // 默认分析深度
+        }
+        
+        try {
+            ConceptRelationshipResultDTO result = new ConceptRelationshipResultDTO();
+            result.setCoreConcept(concept);
+            
+            // 1. 搜索与概念相关的实体和feature
+            List<EntityExtractionDTO> relatedEntities = searchRelatedEntities(concept, context);
+            logger.debug("找到{}个相关实体", relatedEntities.size());
+            
+            if (relatedEntities.isEmpty()) {
+                logger.warn("未找到与概念'{}'相关的实体", concept);
+                result.setRelationshipSummary("未找到与该概念相关的feature和实体信息");
+                result.setConfidenceScore(0.0);
+                return result;
+            }
+            
+            // 2. 收集feature描述和关联概念
+            List<String> featureDescriptions = extractFeatureDescriptions(relatedEntities);
+            result.setTotalFeatures(featureDescriptions.size());
+            
+            // 3. 从feature中发现其他概念（通过featureId关联）
+            List<String> relatedConcepts = discoverRelatedConcepts(concept, relatedEntities, analysisDepth);
+            logger.debug("发现{}个关联概念", relatedConcepts.size());
+            
+            if (relatedConcepts.isEmpty()) {
+                result.setRelationshipSummary("该概念相对独立，未发现明显的关联概念");
+                result.setConfidenceScore(0.3);
+                return result;
+            }
+            
+            // 4. 使用AI分析概念关系
+            List<ConceptRelationshipResultDTO.RelatedConcept> analyzedRelationships = 
+                analyzeRelationshipsWithAI(concept, relatedConcepts, featureDescriptions);
+            
+            // 5. 构建最终结果
+            result.setRelatedConcepts(analyzedRelationships);
+            result.setTotalRelatedConcepts(analyzedRelationships.size());
+            
+            // 6. 生成关系总结
+            generateRelationshipSummary(result);
+            
+            logger.info("概念关系分析完成: concept={}, 发现{}个关系", concept, analyzedRelationships.size());
+            return result;
+            
+        } catch (Exception e) {
+            logger.error("概念关系分析失败: concept={}", concept, e);
+            throw new RuntimeException("概念关系分析服务失败: " + e.getMessage(), e);
+        }
+    }
     
+    /**
+     * 从相关实体中发现其他关联概念
+     * @param coreConcept 核心概念
+     * @param relatedEntities 相关实体列表
+     * @param analysisDepth 分析深度
+     * @return 发现的关联概念列表
+     */
+    private List<String> discoverRelatedConcepts(String coreConcept, List<EntityExtractionDTO> relatedEntities, Integer analysisDepth) {
+        logger.debug("开始发现关联概念: coreConcept={}, entities={}, depth={}", coreConcept, relatedEntities.size(), analysisDepth);
+        
+        // 收集所有涉及的featureId
+        List<Integer> featureIds = relatedEntities.stream()
+                .map(EntityExtractionDTO::getFeatureId)
+                .filter(id -> id != null)
+                .distinct()
+                .collect(Collectors.toList());
+        
+        logger.debug("涉及的featureId: {}", featureIds);
+        
+        // 通过featureId查找其他概念
+        List<String> discoveredConcepts = new ArrayList<>();
+        
+        for (Integer featureId : featureIds) {
+            try {
+                // 查找同一feature下的其他实体
+                List<EntityExtractionDTO> sameFeatureEntities = entityExtractionMapper.findByFeatureId(featureId);
+                
+                for (EntityExtractionDTO entity : sameFeatureEntities) {
+                    String entityName = entity.getNameEn();
+                    // 排除核心概念本身和已发现的概念
+                    if (entityName != null && 
+                        !entityName.equals(coreConcept) && 
+                        !discoveredConcepts.contains(entityName) &&
+                        entityName.length() > 2) {  // 排除过短的概念
+                        discoveredConcepts.add(entityName);
+                    }
+                }
+            } catch (Exception e) {
+                logger.warn("查询featureId={}的其他实体失败: {}", featureId, e.getMessage());
+            }
+        }
+        
+        // 根据分析深度限制返回数量
+        int maxConcepts = Math.min(analysisDepth * 5, 15); // 深度1最多5个，深度2最多10个，深度3最多15个
+        List<String> limitedConcepts = discoveredConcepts.stream()
+                .distinct()
+                .limit(maxConcepts)
+                .collect(Collectors.toList());
+        
+        logger.debug("发现关联概念: {}", limitedConcepts);
+        return limitedConcepts;
+    }
+    
+    /**
+     * 使用AI分析概念关系
+     * @param coreConcept 核心概念
+     * @param relatedConcepts 关联概念列表
+     * @param featureDescriptions feature描述列表
+     * @return 分析后的关系列表
+     */
+    private List<ConceptRelationshipResultDTO.RelatedConcept> analyzeRelationshipsWithAI(
+            String coreConcept, List<String> relatedConcepts, List<String> featureDescriptions) {
+        
+        List<ConceptRelationshipResultDTO.RelatedConcept> analyzedRelationships = new ArrayList<>();
+        
+        try {
+            // 构建AI分析提示词
+            String prompt = Prompt.analyzeConceptRelationships(coreConcept, relatedConcepts, featureDescriptions);
+            logger.debug("AI分析提示词构建完成，概念数量: {}", relatedConcepts.size());
+            
+            // 调用AI模型
+            String aiResponse = AIService.deepseek(prompt);
+            
+            if (aiResponse == null || aiResponse.trim().isEmpty()) {
+                logger.warn("AI模型返回空结果");
+                return analyzedRelationships;
+            }
+            
+            // 解析AI响应
+            analyzedRelationships = parseRelationshipAnalysisResponse(aiResponse, featureDescriptions);
+            logger.debug("AI分析完成，解析出{}个关系", analyzedRelationships.size());
+            
+        } catch (Exception e) {
+            logger.error("AI关系分析失败: {}", e.getMessage());
+            // 创建后备关系（简单的共现关系）
+            analyzedRelationships = createFallbackRelationships(relatedConcepts, featureDescriptions);
+        }
+        
+        return analyzedRelationships;
+    }
+    
+    /**
+     * 解析AI关系分析响应
+     * @param aiResponse AI模型响应
+     * @param featureDescriptions feature描述（用于关联）
+     * @return 解析后的关系列表
+     */
+    private List<ConceptRelationshipResultDTO.RelatedConcept> parseRelationshipAnalysisResponse(
+            String aiResponse, List<String> featureDescriptions) {
+        
+        List<ConceptRelationshipResultDTO.RelatedConcept> relationships = new ArrayList<>();
+        
+        try {
+            String[] lines = aiResponse.split("\n");
+            
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty() || !line.contains("|")) {
+                    continue;
+                }
+                
+                // 解析格式: [ConceptName]|[RelationshipType]|[Strength]|[Description]
+                String[] parts = line.split("\\|", 4);
+                if (parts.length >= 4) {
+                    try {
+                        String conceptName = parts[0].trim();
+                        String relationshipType = parts[1].trim();
+                        Double strength = Double.parseDouble(parts[2].trim());
+                        String description = parts[3].trim();
+                        
+                        // 创建关系对象
+                        ConceptRelationshipResultDTO.RelatedConcept relatedConcept = 
+                            new ConceptRelationshipResultDTO.RelatedConcept(
+                                conceptName, relationshipType, strength, description);
+                        
+                        // 添加相关的feature描述
+                        addRelevantFeatureDescriptions(relatedConcept, conceptName, featureDescriptions);
+                        
+                        relationships.add(relatedConcept);
+                        
+                    } catch (NumberFormatException e) {
+                        logger.warn("解析关系强度失败: {}", line);
+                    }
+                }
+            }
+            
+        } catch (Exception e) {
+            logger.warn("解析AI关系分析响应失败: {}", e.getMessage());
+        }
+        
+        return relationships;
+    }
+    
+    /**
+     * 为关联概念添加相关的feature描述
+     * @param relatedConcept 关联概念对象
+     * @param conceptName 概念名称
+     * @param featureDescriptions 所有feature描述
+     */
+    private void addRelevantFeatureDescriptions(ConceptRelationshipResultDTO.RelatedConcept relatedConcept, 
+                                               String conceptName, List<String> featureDescriptions) {
+        // 找出包含该概念的feature描述
+        List<String> relevantDescriptions = featureDescriptions.stream()
+                .filter(desc -> desc.toLowerCase().contains(conceptName.toLowerCase()))
+                .limit(3) // 限制数量
+                .collect(Collectors.toList());
+        
+        relatedConcept.setFeatureDescriptions(relevantDescriptions);
+        relatedConcept.setSharedFeatures(relevantDescriptions.size());
+    }
+    
+    /**
+     * 创建后备关系（当AI分析失败时）
+     * @param relatedConcepts 关联概念列表
+     * @param featureDescriptions feature描述列表
+     * @return 简单的共现关系列表
+     */
+    private List<ConceptRelationshipResultDTO.RelatedConcept> createFallbackRelationships(
+            List<String> relatedConcepts, List<String> featureDescriptions) {
+        
+        List<ConceptRelationshipResultDTO.RelatedConcept> fallbackRelationships = new ArrayList<>();
+        
+        for (String conceptName : relatedConcepts) {
+            // 计算概念在feature描述中的出现频率作为关系强度
+            long occurrenceCount = featureDescriptions.stream()
+                    .mapToLong(desc -> countOccurrences(desc.toLowerCase(), conceptName.toLowerCase()))
+                    .sum();
+            
+            double strength = Math.min(0.1 + (occurrenceCount * 0.1), 0.8); // 最低0.1，最高0.8
+            
+            ConceptRelationshipResultDTO.RelatedConcept relatedConcept = 
+                new ConceptRelationshipResultDTO.RelatedConcept(
+                    conceptName, "co-occurs", strength, 
+                    "与核心概念在相同的feature描述中出现，可能存在功能关联");
+            
+            addRelevantFeatureDescriptions(relatedConcept, conceptName, featureDescriptions);
+            fallbackRelationships.add(relatedConcept);
+        }
+        
+        return fallbackRelationships;
+    }
+    
+    /**
+     * 计算字符串中子字符串的出现次数
+     */
+    private long countOccurrences(String text, String substring) {
+        if (text == null || substring == null || substring.isEmpty()) {
+            return 0;
+        }
+        
+        long count = 0;
+        int index = 0;
+        while ((index = text.indexOf(substring, index)) != -1) {
+            count++;
+            index += substring.length();
+        }
+        return count;
+    }
+    
+    /**
+     * 生成关系总结
+     * @param result 概念关系分析结果
+     */
+    private void generateRelationshipSummary(ConceptRelationshipResultDTO result) {
+        try {
+            // 找出强关系（强度>=0.6）
+            List<String> strongRelationships = result.getRelatedConcepts().stream()
+                    .filter(rel -> rel.getRelationshipStrength() >= 0.6)
+                    .map(rel -> rel.getConceptName() + "(" + rel.getRelationshipType() + ")")
+                    .limit(5)
+                    .collect(Collectors.toList());
+            
+            if (!strongRelationships.isEmpty()) {
+                String summaryPrompt = Prompt.generateRelationshipSummary(
+                    result.getCoreConcept(), 
+                    result.getTotalRelatedConcepts(), 
+                    strongRelationships);
+                
+                String aiSummary = AIService.deepseek(summaryPrompt);
+                result.setRelationshipSummary(aiSummary != null && !aiSummary.trim().isEmpty() ? 
+                    aiSummary.trim() : generateDefaultSummary(result));
+            } else {
+                result.setRelationshipSummary(generateDefaultSummary(result));
+            }
+            
+            // 计算置信度（基于关系数量和强度）
+            double avgStrength = result.getRelatedConcepts().stream()
+                    .mapToDouble(ConceptRelationshipResultDTO.RelatedConcept::getRelationshipStrength)
+                    .average()
+                    .orElse(0.0);
+            
+            result.setConfidenceScore(Math.min(avgStrength * 0.8 + (result.getTotalRelatedConcepts() * 0.02), 1.0));
+            
+        } catch (Exception e) {
+            logger.warn("生成关系总结失败: {}", e.getMessage());
+            result.setRelationshipSummary(generateDefaultSummary(result));
+            result.setConfidenceScore(0.5);
+        }
+    }
+    
+    /**
+     * 生成默认关系总结
+     */
+    private String generateDefaultSummary(ConceptRelationshipResultDTO result) {
+        return String.format(
+            "分析了与'%s'相关的%d个feature，发现%d个关联概念。" +
+            "这些关系主要涉及功能依赖、实现关联和系统交互等方面。",
+            result.getCoreConcept(),
+            result.getTotalFeatures(),
+            result.getTotalRelatedConcepts()
+        );
+    }
 
+    /**
+     * 概念翻译结果内部类
+     */
+    private static class ConceptTranslationResult {
+        private final String primaryTerm;
+        private final List<String> alternativeTerms;
+        private final String explanation;
+
+        public ConceptTranslationResult(String primaryTerm, List<String> alternativeTerms, String explanation) {
+            this.primaryTerm = primaryTerm;
+            this.alternativeTerms = alternativeTerms != null ? alternativeTerms : new ArrayList<>();
+            this.explanation = explanation;
+        }
+
+        // Getters
+        public String getPrimaryTerm() { return primaryTerm; }
+        public List<String> getAlternativeTerms() { return alternativeTerms; }
+        public String getExplanation() { return explanation; }
+    }
+
+    /**
+     * 翻译和标准化概念为Linux内核术语
+     */
+    private ConceptTranslationResult translateAndStandardizeConcept(String concept, String context) {
+        try {
+            logger.debug("开始翻译概念: concept={}, context={}", concept, context);
+            
+            // 构建AI翻译提示词
+            String prompt = Prompt.translateConceptToKernelTerms(concept, context);
+            
+            // 调用AI进行翻译
+            String aiResponse = AIService.deepseek(prompt);
+            
+            if (aiResponse != null && !aiResponse.trim().isEmpty()) {
+                // 解析AI响应
+                return parseTranslationResponse(concept, aiResponse);
+            } else {
+                logger.warn("AI翻译返回空结果，使用原概念");
+                return new ConceptTranslationResult(concept, List.of(), "未能获取AI翻译结果");
+            }
+            
+        } catch (Exception e) {
+            logger.error("概念翻译失败，使用原概念: {}", e.getMessage());
+            return new ConceptTranslationResult(concept, List.of(), "翻译失败，使用原概念");
+        }
+    }
+
+    /**
+     * 解析AI翻译响应
+     */
+    private ConceptTranslationResult parseTranslationResponse(String originalConcept, String aiResponse) {
+        try {
+            // 清理AI响应中的markdown格式
+            String cleanedResponse = cleanJsonResponse(aiResponse);
+            logger.debug("清理后的翻译响应: {}", cleanedResponse);
+            
+            // 尝试解析JSON响应
+            ObjectMapper mapper = new ObjectMapper();
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> response = mapper.readValue(cleanedResponse, java.util.Map.class);
+            
+            String primaryTerm = (String) response.get("primaryTerm");
+            @SuppressWarnings("unchecked")
+            List<String> alternativeTerms = (List<String>) response.get("alternativeTerms");
+            String explanation = (String) response.get("explanation");
+            
+            if (primaryTerm != null && !primaryTerm.trim().isEmpty()) {
+                logger.debug("翻译成功: 原概念='{}', 主术语='{}', 备选术语={}", 
+                    originalConcept, primaryTerm, alternativeTerms);
+                
+                return new ConceptTranslationResult(
+                    primaryTerm.trim(), 
+                    alternativeTerms != null ? alternativeTerms : new ArrayList<>(), 
+                    explanation != null ? explanation : "AI翻译结果"
+                );
+            }
+            
+        } catch (Exception e) {
+            logger.warn("解析翻译响应失败: {}", e.getMessage());
+            logger.debug("原始翻译响应: {}", aiResponse);
+        }
+        
+        // 解析失败，使用原概念
+        return new ConceptTranslationResult(originalConcept, List.of(), "翻译解析失败，使用原概念");
+    }
+
+    /**
+     * 构建搜索词列表
+     */
+    private List<String> buildSearchTerms(ConceptTranslationResult translationResult) {
+        List<String> searchTerms = new ArrayList<>();
+        
+        // 添加主要术语
+        if (translationResult.getPrimaryTerm() != null && !translationResult.getPrimaryTerm().trim().isEmpty()) {
+            searchTerms.add(translationResult.getPrimaryTerm().trim());
+        }
+        
+        // 添加备选术语
+        for (String altTerm : translationResult.getAlternativeTerms()) {
+            if (altTerm != null && !altTerm.trim().isEmpty() && !searchTerms.contains(altTerm.trim())) {
+                searchTerms.add(altTerm.trim());
+            }
+        }
+        
+        // 如果没有找到任何翻译术语，至少保留原始概念
+        if (searchTerms.isEmpty()) {
+            searchTerms.add(translationResult.getPrimaryTerm()); // primaryTerm在fallback情况下是原概念
+        }
+        
+        logger.debug("构建的搜索词列表: {}", searchTerms);
+        return searchTerms;
+    }
+
+    @Override
+    public ConceptValidationResultDTO validateConcept(String concept, String context) {
+        logger.info("开始验证概念: concept={}, context={}", concept, context);
+        
+        if (concept == null || concept.trim().isEmpty()) {
+            throw new IllegalArgumentException("概念不能为空");
+        }
+        
+        try {
+            // 1. 注释掉概念翻译和标准化逻辑，后续使用其他方式实现
+            // ConceptTranslationResult translationResult = translateAndStandardizeConcept(concept.trim(), context);
+            // logger.debug("概念翻译结果: 原概念='{}', 主要术语='{}', 备选术语={}", 
+            //     concept, translationResult.primaryTerm, translationResult.alternativeTerms);
+            
+            // 2. 直接使用原始概念进行数据库查询
+            // List<String> searchTerms = buildSearchTerms(translationResult);
+            List<EntityExtractionDTO> allMatches = new ArrayList<>();
+            boolean hasExactMatch = false;
+            
+            String searchTerm = concept.trim();
+            // 先尝试精确匹配
+            List<EntityExtractionDTO> exactMatches = entityExtractionMapper.findByExactConcept(searchTerm);
+            if (!exactMatches.isEmpty()) {
+                hasExactMatch = true;
+                allMatches.addAll(exactMatches);
+                logger.debug("概念'{}'精确匹配{}个结果", searchTerm, exactMatches.size());
+            } else {
+                // 如果精确匹配失败，尝试模糊匹配
+                List<EntityExtractionDTO> fuzzyMatches = entityExtractionMapper.findByConcept(searchTerm);
+                allMatches.addAll(fuzzyMatches);
+                logger.debug("概念'{}'模糊匹配{}个结果", searchTerm, fuzzyMatches.size());
+            }
+            
+            // 去除重复项
+            allMatches = allMatches.stream()
+                .distinct()
+                .collect(Collectors.toList());
+            
+            logger.debug("概念'{}'总查询结果: {}个匹配", concept, allMatches.size());
+            
+            // 3. 构建验证结果
+            return buildConceptValidationResult(concept, context, allMatches, hasExactMatch);
+            
+        } catch (Exception e) {
+            logger.error("概念验证失败: concept={}, error={}", concept, e.getMessage(), e);
+            throw new RuntimeException("概念验证服务异常: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * 构建概念验证结果
+     */
+    private ConceptValidationResultDTO buildConceptValidationResult(
+            String concept, String context, List<EntityExtractionDTO> matches, boolean isExactMatch) {
+        
+        if (matches.isEmpty()) {
+            // 没有找到匹配的概念
+            return new ConceptValidationResultDTO(
+                concept, 
+                false, 
+                0, 
+                null, 
+                null, 
+                0.0, 
+                "在概念数据库中未找到匹配的概念"
+            );
+        }
+        
+        if (matches.size() == 1) {
+            // 只有一个匹配的概念
+            EntityExtractionDTO match = matches.get(0);
+            double confidence = isExactMatch ? 1.0 : 0.8;
+            String details = isExactMatch ? "在概念数据库中找到精确匹配的概念" : "在概念数据库中找到相似的概念";
+                
+            return new ConceptValidationResultDTO(
+                concept,
+                true,
+                1,
+                match.getNameEn(),
+                match.getDefinitionEn(),
+                confidence,
+                details
+            );
+        }
+        
+        // 有多个匹配的概念，需要使用AI判断最佳匹配
+        return findBestMatchWithAI(concept, context, matches, isExactMatch);
+    }
+    
+    /**
+     * 使用AI判断多个概念中的最佳匹配
+     */
+    private ConceptValidationResultDTO findBestMatchWithAI(
+            String concept, String context, List<EntityExtractionDTO> matches, boolean isExactMatch) {
+        
+        try {
+            logger.debug("使用AI判断最佳匹配: concept={}, matches={}", concept, matches.size());
+            
+            // 构建AI提示词
+            String prompt = buildConceptMatchingPrompt(concept, context, matches);
+            
+            // 调用AI进行判断
+            String aiResponse = AIService.deepseek(prompt);
+            
+            if (aiResponse != null && !aiResponse.trim().isEmpty()) {
+                // 解析AI响应，找到最佳匹配
+                return parseAIMatchingResponse(concept, context, matches, aiResponse, isExactMatch);
+            } else {
+                logger.warn("AI判断返回空结果，使用默认策略");
+                return createDefaultBestMatch(concept, context, matches, isExactMatch);
+            }
+            
+        } catch (Exception e) {
+            logger.error("AI判断最佳匹配失败，使用默认策略: {}", e.getMessage());
+            logger.debug("AI判断失败的详细信息: concept={}, matches={}", concept, matches.size(), e);
+            return createDefaultBestMatch(concept, context, matches, isExactMatch);
+        }
+    }
+
+    /**
+     * 构建概念匹配的AI提示词
+     */
+    private String buildConceptMatchingPrompt(String concept, String context, List<EntityExtractionDTO> matches) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("我需要你帮我判断哪个概念定义最匹配用户输入的概念和上下文。\n\n");
+        prompt.append("用户输入的概念: ").append(concept).append("\n");
+        if (context != null && !context.trim().isEmpty()) {
+            prompt.append("用户提供的上下文: ").append(context).append("\n");
+        }
+        prompt.append("\n候选概念列表:\n");
+        
+        for (int i = 0; i < matches.size(); i++) {
+            EntityExtractionDTO match = matches.get(i);
+            prompt.append(String.format("%d. 概念名称: %s\n", i + 1, match.getNameEn()));
+            if (match.getNameCn() != null && !match.getNameCn().trim().isEmpty()) {
+                prompt.append(String.format("   中文名称: %s\n", match.getNameCn()));
+            }
+            if (match.getDefinitionEn() != null && !match.getDefinitionEn().trim().isEmpty()) {
+                prompt.append(String.format("   英文定义: %s\n", match.getDefinitionEn()));
+            }
+            if (match.getDefinitionCn() != null && !match.getDefinitionCn().trim().isEmpty()) {
+                prompt.append(String.format("   中文定义: %s\n", match.getDefinitionCn()));
+            }
+            prompt.append("\n");
+        }
+        
+        prompt.append("请返回JSON格式的结果，不要使用markdown代码块包装，直接返回纯JSON:\n");
+        prompt.append("{\n");
+        prompt.append("  \"bestMatchIndex\": <最佳匹配的序号(1-based)>,\n");
+        prompt.append("  \"confidence\": <置信度(0.0-1.0)>,\n");
+        prompt.append("  \"reasoning\": \"<判断理由>\"\n");
+        prompt.append("}\n\n");
+        prompt.append("注意：请确保返回的是有效的JSON格式，不要添加任何```json或```标记。");
+        
+        return prompt.toString();
+    }
+    
+    /**
+     * 解析AI匹配响应
+     */
+    private ConceptValidationResultDTO parseAIMatchingResponse(
+            String concept, String context, List<EntityExtractionDTO> matches, 
+            String aiResponse, boolean isExactMatch) {
+        
+        try {
+            // 清理AI响应中的markdown格式
+            String cleanedResponse = cleanJsonResponse(aiResponse);
+            logger.debug("清理后的AI响应: {}", cleanedResponse);
+            
+            // 尝试解析JSON响应
+            ObjectMapper mapper = new ObjectMapper();
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> response = mapper.readValue(cleanedResponse, java.util.Map.class);
+            
+            Integer bestMatchIndex = (Integer) response.get("bestMatchIndex");
+            Double confidence = ((Number) response.get("confidence")).doubleValue();
+            String reasoning = (String) response.get("reasoning");
+            
+            if (bestMatchIndex != null && bestMatchIndex >= 1 && bestMatchIndex <= matches.size()) {
+                EntityExtractionDTO bestMatch = matches.get(bestMatchIndex - 1);
+                
+                // 如果是精确匹配，提高置信度
+                if (isExactMatch && confidence < 0.9) {
+                    confidence = Math.min(1.0, confidence + 0.1);
+                }
+                
+                String details = String.format("在概念数据库中找到%d个匹配的概念。AI判断最佳匹配为第%d个概念，理由: %s", 
+                    matches.size(), bestMatchIndex, reasoning);
+                
+                return new ConceptValidationResultDTO(
+                    concept,
+                    true,
+                    matches.size(),
+                    bestMatch.getNameEn(),
+                    bestMatch.getDefinitionEn(),
+                    confidence,
+                    details
+                );
+            }
+            
+        } catch (Exception e) {
+            logger.warn("解析AI响应失败: {}", e.getMessage());
+            logger.debug("原始AI响应: {}", aiResponse);
+        }
+        
+        // 解析失败，使用默认策略
+        return createDefaultBestMatch(concept, context, matches, isExactMatch);
+    }
+    
+    /**
+     * 清理AI响应中的markdown格式，提取纯JSON内容
+     */
+    private String cleanJsonResponse(String aiResponse) {
+        if (aiResponse == null || aiResponse.trim().isEmpty()) {
+            return aiResponse;
+        }
+        
+        String cleaned = aiResponse.trim();
+        
+        // 移除开头的```json标记
+        if (cleaned.startsWith("```json")) {
+            cleaned = cleaned.substring(7).trim();
+        } else if (cleaned.startsWith("```")) {
+            cleaned = cleaned.substring(3).trim();
+        }
+        
+        // 移除结尾的```标记
+        if (cleaned.endsWith("```")) {
+            cleaned = cleaned.substring(0, cleaned.length() - 3).trim();
+        }
+        
+        // 移除其他可能的markdown标记
+        cleaned = cleaned.replaceAll("^```[a-zA-Z]*\\n?", "").replaceAll("\\n?```$", "");
+        
+        return cleaned.trim();
+    }
+    
+    /**
+     * 创建默认的最佳匹配结果（当AI判断失败时使用）
+     */
+    private ConceptValidationResultDTO createDefaultBestMatch(
+            String concept, String context, List<EntityExtractionDTO> matches, boolean isExactMatch) {
+        
+        // 选择第一个匹配作为默认最佳匹配
+        EntityExtractionDTO bestMatch = matches.get(0);
+        double confidence = isExactMatch ? 0.9 : 0.7;
+        
+        String details = String.format("在概念数据库中找到%d个匹配的概念。由于AI判断失败，选择第一个匹配作为最佳结果", 
+            matches.size());
+        
+        return new ConceptValidationResultDTO(
+            concept,
+            true,
+            matches.size(),
+            bestMatch.getNameEn(),
+            bestMatch.getDefinitionEn(),
+            confidence,
+            details
+        );
+    }
 
 } 

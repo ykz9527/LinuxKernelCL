@@ -1,5 +1,7 @@
 package com.cs.api.common.ai;
 
+import java.util.List;
+
 /**
  * AI提示词生成工具类
  * 包含各种场景下的prompt字符串生成方法
@@ -132,6 +134,44 @@ public class Prompt {
     }
 
     /**
+     * 生成概念翻译和标准化提示词（专门用于概念验证）
+     * @param concept 输入的概念（可能是中文或非标准英文）
+     * @param context 概念的上下文描述
+     * @return 用于将概念转换为Linux内核标准英文术语的提示词
+     */
+    public static String translateConceptToKernelTerms(String concept, String context) {
+        return String.format(
+            "You are a Linux kernel technical terminology expert. " +
+            "Your task is to translate and standardize concepts into precise Linux kernel English terminology.\n\n" +
+            "Input Concept: %s\n" +
+            "Context: %s\n\n" +
+            "Please provide:\n" +
+            "1. The most accurate Linux kernel English term for this concept\n" +
+            "2. Alternative standard terms commonly used in kernel documentation\n" +
+            "3. Brief explanation of why this translation is accurate\n\n" +
+            "Translation Guidelines:\n" +
+            "- If input is Chinese, translate to the precise Linux kernel English equivalent\n" +
+            "- If input is already English, standardize to official kernel terminology\n" +
+            "- Use terms found in actual Linux kernel source code, documentation, or man pages\n" +
+            "- Prefer widely-used standard terms over obscure variations\n" +
+            "- Consider the context to determine the most specific appropriate term\n\n" +
+            "Examples:\n" +
+            "- '进程调度' → 'process scheduling' or 'task scheduling'\n" +
+            "- '内存管理' → 'memory management'\n" +
+            "- '文件系统' → 'file system' or 'filesystem'\n" +
+            "- '中断处理' → 'interrupt handling'\n\n" +
+            "Output Format (JSON):\n" +
+            "{\n" +
+            "  \"primaryTerm\": \"<most accurate kernel term>\",\n" +
+            "  \"alternativeTerms\": [\"<alt1>\", \"<alt2>\"],\n" +
+            "  \"explanation\": \"<brief explanation>\"\n" +
+            "}\n\n" +
+            "Translation:",
+            concept, context != null ? context : "Linux kernel context"
+        );
+    }
+
+    /**
      * 生成概念三元组提取提示词
      * @param concept 核心概念（在context中被提到）
      * @param context 包含该概念的feature描述句子
@@ -193,6 +233,85 @@ public class Prompt {
             
             Triplets:""",
             concept, context != null ? context : "", concept, concept, concept, concept
+        );
+    }
+
+    /**
+     * 生成概念关系分析提示词
+     * @param coreConcept 核心概念
+     * @param relatedConcepts 从feature中发现的相关概念列表
+     * @param featureDescriptions 相关的feature描述
+     * @return 用于分析概念关系的英文提示词
+     */
+    public static String analyzeConceptRelationships(String coreConcept, List<String> relatedConcepts, List<String> featureDescriptions) {
+        String conceptList = String.join(", ", relatedConcepts);
+        String featureContext = String.join("\n", featureDescriptions);
+        
+        return String.format("""
+            You are a technical knowledge analyst specializing in Linux kernel concept relationships.
+            Your task is to analyze relationships between a core concept and related concepts found in feature descriptions.
+
+            Core Concept: %s
+            Related Concepts Found: %s
+            
+            Feature Context:
+            %s
+
+            For each related concept listed above, analyze its relationship with the core concept '%s'.
+            Use the feature descriptions as context to understand how these concepts relate to each other.
+
+            For each relationship, provide:
+            1. Relationship Type (choose from: contains, implements, uses, extends, configures, supports, manages, communicates_with, depends_on, optimizes, other)
+            2. Relationship Strength (0.0-1.0, where 1.0 is strongest possible relationship)
+            3. Brief relationship description explaining how they are connected
+
+            Analysis Guidelines:
+            - Focus on direct, technical relationships described in the feature contexts
+            - Consider functional dependencies, implementation relationships, and system interactions
+            - Base strength scores on how closely the concepts work together or depend on each other
+            - Be precise and avoid speculation beyond what the feature descriptions indicate
+            - If a concept appears unrelated to the core concept, assign low strength (< 0.3)
+
+            Output Format:
+            For each related concept, output one line in this exact format:
+            [ConceptName]|[RelationshipType]|[Strength]|[Description]
+
+            Example:
+            memory_allocator|uses|0.8|The core concept utilizes memory allocation mechanisms for resource management
+            file_system|depends_on|0.7|The core concept requires file system operations to function properly
+
+            Relationship Analysis:""",
+            coreConcept, conceptList, featureContext, coreConcept
+        );
+    }
+
+    /**
+     * 生成关系总结提示词
+     * @param coreConcept 核心概念
+     * @param relationshipCount 发现的关系数量
+     * @param strongRelationships 强关系列表
+     * @return 用于生成关系总结的英文提示词
+     */
+    public static String generateRelationshipSummary(String coreConcept, int relationshipCount, List<String> strongRelationships) {
+        String strongRelList = String.join(", ", strongRelationships);
+        
+        return String.format("""
+            You are a technical documentation specialist. Create a concise summary of concept relationships.
+
+            Core Concept: %s
+            Total Relationships Found: %d
+            Key Strong Relationships: %s
+
+            Create a brief, professional summary (2-3 sentences) that describes:
+            1. The overall role and position of the core concept in the Linux kernel ecosystem
+            2. The most important relationships and dependencies
+            3. The technical significance of these relationships
+
+            Focus on practical implications and system architecture aspects.
+            Use technical language appropriate for kernel developers.
+
+            Summary:""",
+            coreConcept, relationshipCount, strongRelList
         );
     }
 }

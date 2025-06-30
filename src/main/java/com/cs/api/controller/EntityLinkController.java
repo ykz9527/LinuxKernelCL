@@ -15,6 +15,10 @@ import com.cs.api.dto.CodeSearchRequestDTO;
 import com.cs.api.dto.CodeSearchResultDTO;
 import com.cs.api.dto.ConceptExplanationRequestDTO;
 import com.cs.api.dto.ConceptExplanationResultDTO;
+import com.cs.api.dto.ConceptRelationshipRequestDTO;
+import com.cs.api.dto.ConceptRelationshipResultDTO;
+import com.cs.api.dto.ConceptValidationRequestDTO;
+import com.cs.api.dto.ConceptValidationResultDTO;
 import com.cs.api.dto.TripleSearchRequestDTO;
 import com.cs.api.dto.TripleSearchResultDTO;
 import com.cs.api.service.EntityLinkService;
@@ -157,6 +161,89 @@ public class EntityLinkController {
         } catch (Exception e) {
             logger.error("三元组搜索服务异常", e);
             return Result.error(500, "服务器内部发生错误，三元组搜索服务失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 分析概念关系
+     */
+    @PostMapping("/relationships/analyze")
+    @Operation(
+        summary = "分析概念关系", 
+        description = "通过搜索相关feature和关联概念，分析概念间的关系类型和强度"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "分析成功"),
+        @ApiResponse(responseCode = "400", description = "请求参数错误"),
+        @ApiResponse(responseCode = "500", description = "服务器内部错误")
+    })
+    public Result<ConceptRelationshipResultDTO> analyzeConceptRelationships(
+            @Valid @RequestBody ConceptRelationshipRequestDTO request) {
+        logger.info("接收概念关系分析请求: {}", request);
+        
+        try {
+            ConceptRelationshipResultDTO result = entityLinkService.analyzeConceptRelationships(
+                request.getConcept(), 
+                request.getContext(),
+                request.getAnalysisDepth()
+            );
+            
+            if (result.getTotalRelatedConcepts() == 0) {
+                logger.info("未发现概念关系: concept={}, context={}", 
+                    request.getConcept(), request.getContext());
+                return Result.success("未发现明显的概念关系", result);
+            }
+            
+            logger.info("概念关系分析成功，发现{}个关系", result.getTotalRelatedConcepts());
+            return Result.success(result);
+            
+        } catch (IllegalArgumentException e) {
+            logger.error("请求参数错误: {}", e.getMessage());
+            return Result.error(400, "请求体格式错误或缺少必须的参数: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("概念关系分析服务异常", e);
+            return Result.error(500, "服务器内部发生错误，概念关系分析服务失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 验证概念是否存在
+     */
+    @PostMapping("/concept/validate")
+    @Operation(
+        summary = "验证概念是否存在", 
+        description = "验证输入的概念是否存在于概念列表中，如果存在多个同名概念则结合上下文进行AI判断"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "验证成功"),
+        @ApiResponse(responseCode = "400", description = "请求参数错误"),
+        @ApiResponse(responseCode = "500", description = "服务器内部错误")
+    })
+    public Result<ConceptValidationResultDTO> validateConcept(
+            @Valid @RequestBody ConceptValidationRequestDTO request) {
+        logger.info("接收概念验证请求: {}", request);
+        
+        try {
+            ConceptValidationResultDTO result = entityLinkService.validateConcept(
+                request.getConcept(),
+                request.getContext()
+            );
+            
+            if (result.isExists()) {
+                logger.info("概念验证成功，概念存在: concept={}, matchCount={}, confidence={}", 
+                    request.getConcept(), result.getMatchCount(), result.getConfidence());
+            } else {
+                logger.info("概念验证完成，概念不存在: concept={}", request.getConcept());
+            }
+            
+            return Result.success(result);
+            
+        } catch (IllegalArgumentException e) {
+            logger.error("请求参数错误: {}", e.getMessage());
+            return Result.error(400, "请求体格式错误或缺少必须的参数: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("概念验证服务异常", e);
+            return Result.error(500, "服务器内部发生错误，概念验证服务失败: " + e.getMessage());
         }
     }
 } 

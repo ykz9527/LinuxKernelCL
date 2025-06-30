@@ -64,6 +64,26 @@ public interface EntityExtractionMapper extends BaseMapper<EntityExtractionDTO> 
     Long countByFeatureId(@Param("featureId") Integer featureId);
     
     /**
+     * 根据概念名称模糊查询实体（支持英文和中文名称）
+     * 用于概念验证功能
+     * 
+     * @param concept 概念名称
+     * @return 匹配的实体列表
+     */
+    @Select("SELECT * FROM entities_extraction WHERE name_en LIKE CONCAT('%', #{concept}, '%') OR name_cn LIKE CONCAT('%', #{concept}, '%') OR #{concept} LIKE CONCAT('%', name_en, '%') OR #{concept} LIKE CONCAT('%', name_cn, '%')")
+    List<EntityExtractionDTO> findByConcept(@Param("concept") String concept);
+    
+    /**
+     * 精确查询概念（英文或中文名称完全匹配）
+     * 用于概念验证功能
+     * 
+     * @param concept 概念名称
+     * @return 匹配的实体列表
+     */
+    @Select("SELECT * FROM entities_extraction WHERE name_en = #{concept} OR name_cn = #{concept}")
+    List<EntityExtractionDTO> findByExactConcept(@Param("concept") String concept);
+    
+    /**
      * 批量插入实体数据（避免重复）
      * 使用 ON DUPLICATE KEY UPDATE 处理重复数据
      */

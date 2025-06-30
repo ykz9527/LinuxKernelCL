@@ -4,6 +4,8 @@ import java.util.List;
 
 import com.cs.api.dto.CodeSearchResultDTO;
 import com.cs.api.dto.ConceptExplanationResultDTO;
+import com.cs.api.dto.ConceptRelationshipResultDTO;
+import com.cs.api.dto.ConceptValidationResultDTO;
 import com.cs.api.dto.TripleSearchResultDTO;
 
 /**
@@ -41,5 +43,27 @@ public interface EntityLinkService {
      * @return 三元组搜索结果列表
      */
     List<TripleSearchResultDTO> searchTriples(String concept, String context);
+
+    /**
+     * 分析概念关系
+     * 通过搜索相关feature和关联概念，分析概念间的关系类型和强度
+     *
+     * @param concept 核心概念
+     * @param context 上下文信息
+     * @param analysisDepth 分析深度级别(1-3)
+     * @return 概念关系分析结果
+     */
+    ConceptRelationshipResultDTO analyzeConceptRelationships(String concept, String context, Integer analysisDepth);
+
+    /**
+     * 验证概念是否存在于概念列表中
+     * 通过查询数据库中的概念表，判断输入的概念是否存在
+     * 如果存在多个同名概念，则结合上下文和definition_en字段使用AI判断最佳匹配
+     *
+     * @param concept 要验证的概念
+     * @param context 上下文信息，用于精确匹配
+     * @return 概念验证结果
+     */
+    ConceptValidationResultDTO validateConcept(String concept, String context);
 
 } 

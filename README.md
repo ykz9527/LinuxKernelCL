@@ -35,7 +35,14 @@ src/main/java/com/example/api/
    - 批量存储到MySQL数据库
    - 支持重复数据检查和更新
 
-5. **代码追溯模块** 🚀 
+5. **概念关系分析模块** 🔗 *新增功能*
+   - 智能分析Linux内核概念之间的关系
+   - 基于feature和实体数据的关系发现
+   - AI驱动的关系类型和强度分析
+   - 支持多层次的关系挖掘和分析
+   - 生成全面的关系总结和置信度评估
+
+6. **代码追溯模块** 🚀 
    - Linux内核函数/结构体演化历史追溯
    - 基于commit信息的代码变更追踪
    - 支持多文件路径和多版本追溯
@@ -115,6 +122,16 @@ mvn spring-boot:run
 |------|------|------|------|
 | POST | /api/entity-linker/concept/explanation | 搜索概念的文本解释 | ConceptExplanationRequestDTO |
 
+### 概念验证接口 ✅ *新增*
+| 方法 | 路径 | 描述 | 参数 |
+|------|------|------|------|
+| POST | /api/entity-link/concept/validate | 验证概念是否存在于概念列表中 | ConceptValidationRequestDTO |
+
+### 概念关系分析接口 🔗 *新增*
+| 方法 | 路径 | 描述 | 参数 |
+|------|------|------|------|
+| POST | /api/entity-link/relationships/analyze | 分析概念关系 | ConceptRelationshipRequestDTO |
+
 ### 实体数据导入接口 ⭐ *更新*
 | 方法 | 路径 | 描述 | 参数 |
 |------|------|------|------|
@@ -152,6 +169,23 @@ mvn spring-boot:run
 {
   "concept": "process",                  // 必填：要搜索的概念
   "context": "A process in an operating system"  // 可选：概念相关的上下文
+}
+```
+
+#### 概念验证请求参数 (ConceptValidationRequestDTO) ✅ *新增*
+```json
+{
+  "concept": "memory allocation",        // 必填：要验证的概念
+  "context": "Linux内核内存管理中的内存分配机制"  // 可选：上下文信息，用于精确匹配多个同名概念
+}
+```
+
+#### 概念关系分析请求参数 (ConceptRelationshipRequestDTO) 🔗 *新增*
+```json
+{
+  "concept": "memory allocation",        // 必填：要分析的核心概念
+  "context": "Linux内核内存管理",      // 可选：上下文信息，有助于提高分析准确性
+  "analysisDepth": 2                    // 可选：分析深度级别(1-3)，默认为2
 }
 ```
 
@@ -199,6 +233,74 @@ mvn spring-boot:run
   "data": {
     "concept": "MAC address",
     "explanation": "A MAC address (short for medium access control address or media access control address) is a unique identifier assigned to a network interface controller (NIC) for use as a network address in communications within a network segment. This use is common in most IEEE 802 networking technologies, including Ethernet, Wi-Fi, and Bluetooth...\n\n相关上下文信息:\nfeature_description: hns3 PF support get MAC address space assigned by firmware\n\n参考来源: https://en.wikipedia.org/wiki/MAC_address"
+  }
+}
+```
+
+#### 概念验证响应示例 ✅ *新增*
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "concept": "memory allocation",
+    "exists": true,
+    "matchCount": 2,
+    "bestMatchConcept": "memory allocation",
+    "bestMatchDefinition": "内核中用于动态分配和管理内存资源的机制，包括kmalloc、vmalloc等多种分配器",
+    "confidence": 0.92,
+    "details": "在概念数据库中找到2个匹配的概念。基于提供的上下文'Linux内核内存管理中的内存分配机制'，AI判断最佳匹配为内核内存分配相关概念，置信度为92%。"
+  }
+}
+```
+
+#### 概念关系分析响应示例 🔗 *新增*
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "coreConcept": "memory allocation",
+    "totalFeatures": 15,
+    "totalRelatedConcepts": 8,
+    "confidenceScore": 0.85,
+    "relationshipSummary": "内存分配作为Linux内核的核心功能，与多个系统组件存在密切关系。主要关系包括与内存管理子系统的实现依赖、与进程管理的协作关系，以及与虚拟内存系统的交互。这些关系体现了内核内存管理的复杂性和重要性。",
+    "relatedConcepts": [
+      {
+        "conceptName": "memory management",
+        "relationshipType": "contains",
+        "relationshipStrength": 0.92,
+        "relationshipDescription": "内存分配是内存管理子系统的核心组成部分",
+        "sharedFeatures": 8,
+        "featureDescriptions": [
+          "Enhanced memory management system with new allocation algorithms",
+          "Memory allocation optimization for NUMA systems",
+          "Dynamic memory allocation improvements"
+        ]
+      },
+      {
+        "conceptName": "kmalloc",
+        "relationshipType": "implements",
+        "relationshipStrength": 0.89,
+        "relationshipDescription": "kmalloc是内核中实现内存分配的主要函数接口",
+        "sharedFeatures": 5,
+        "featureDescriptions": [
+          "kmalloc implementation improvements",
+          "Enhanced kmalloc debugging features"
+        ]
+      },
+      {
+        "conceptName": "virtual memory",
+        "relationshipType": "depends_on",
+        "relationshipStrength": 0.78,
+        "relationshipDescription": "内存分配依赖虚拟内存系统提供地址空间管理",
+        "sharedFeatures": 4,
+        "featureDescriptions": [
+          "Virtual memory subsystem enhancements",
+          "VM allocation strategy improvements"
+        ]
+      }
+    ]
   }
 }
 ```
