@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import com.cs.api.common.Result;
 import com.cs.api.dto.CodeSearchRequestDTO;
 import com.cs.api.dto.CodeSearchResultDTO;
+import com.cs.api.dto.CodeClusterResultDTO;
 import com.cs.api.dto.ConceptExplanationRequestDTO;
 import com.cs.api.dto.ConceptExplanationResultDTO;
 import com.cs.api.dto.ConceptRelationshipRequestDTO;
@@ -85,6 +86,51 @@ public class EntityLinkController {
         } catch (Exception e) {
             logger.error("代码搜索服务异常", e);
             return Result.error(500, "服务器内部发生错误，代码搜索服务失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 基于词袋模型的代码聚类分析
+     */
+    @PostMapping("/code/analyze-clusters")
+    @Operation(
+        summary = "代码聚类分析", 
+        description = "根据概念搜索相关代码，通过词袋模型分析代码关系并进行聚类汇总"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "分析成功"),
+        @ApiResponse(responseCode = "400", description = "请求参数错误"),
+        @ApiResponse(responseCode = "404", description = "指定版本不存在"),
+        @ApiResponse(responseCode = "500", description = "服务器内部错误")
+    })
+    public Result<CodeClusterResultDTO> analyzeCodeClusters(
+            @Valid @RequestBody CodeSearchRequestDTO searchRequest) {
+        logger.info("接收代码聚类分析请求: {}", searchRequest);
+        
+        try {
+            // 执行代码聚类分析
+            CodeClusterResultDTO clusterResult = entityLinkService.analyzeCodeClusters(
+                searchRequest.getConcept(), 
+                searchRequest.getContext(), 
+                searchRequest.getVersion()
+            );
+            
+            if (clusterResult.getTotalCodeLines() == 0) {
+                logger.info("未找到可分析的代码: concept={}, context={}, version={}", 
+                    searchRequest.getConcept(), searchRequest.getContext(), searchRequest.getVersion());
+                return Result.success("未找到可分析的代码", clusterResult);
+            }
+            
+            logger.info("代码聚类分析成功，分析了{}行代码，生成{}个聚类", 
+                clusterResult.getTotalCodeLines(), clusterResult.getTotalClusters());
+            return Result.success(clusterResult);
+            
+        } catch (IllegalArgumentException e) {
+            logger.error("请求参数错误: {}", e.getMessage());
+            return Result.error(400, "请求体格式错误或缺少必须的参数: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("代码聚类分析服务异常", e);
+            return Result.error(500, "服务器内部发生错误，代码聚类分析服务失败: " + e.getMessage());
         }
     }
     

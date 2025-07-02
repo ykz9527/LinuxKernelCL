@@ -3,6 +3,7 @@ package com.cs.api.service;
 import java.util.List;
 
 import com.cs.api.dto.CodeSearchResultDTO;
+import com.cs.api.dto.CodeClusterResultDTO;
 import com.cs.api.dto.ConceptExplanationResultDTO;
 import com.cs.api.dto.ConceptRelationshipResultDTO;
 import com.cs.api.dto.ConceptValidationResultDTO;
@@ -25,6 +26,17 @@ public interface EntityLinkService {
      * @return 搜索结果列表
      */
     List<CodeSearchResultDTO> searchCode(String concept, String context, String version);
+
+    /**
+     * 执行基于词袋模型的代码聚类分析
+     * 根据概念搜索相关代码，通过行号获取单行代码，使用词袋模型进行聚类分析
+     * 
+     * @param concept 搜索概念
+     * @param context 上下文信息
+     * @param version 代码版本
+     * @return 代码聚类分析结果
+     */
+    CodeClusterResultDTO analyzeCodeClusters(String concept, String context, String version);
 
     /**
      * 获取概念的文本解释

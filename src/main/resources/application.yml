@@ -15,7 +15,7 @@ spring:
   # 数据源配置 - 使用MySQL数据库
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://10.176.34.96:3306/linuxDatabase?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&autoReconnect=true
+    url: jdbc:mysql://47.102.136.106:3306/linuxDatabase?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&autoReconnect=true
     username: root
     password: 3edc@WSX!QAZ
     # 连接池配置
@@ -42,7 +42,7 @@ jackson:
 # 内核代码分析配置 ⭐ 新增
 kernel:
   source:
-    path: /home/fdse/ytest/codeMap/linux/repo  # 请修改为您的Linux内核源码路径
+    path: /home/linux # 请修改为您的Linux内核源码路径
   analysis:
     max-results: 20
     timeout: 30
@@ -77,7 +77,7 @@ ai:
 tracker:
   api:
     # tracker服务基础URL，默认使用内网地址
-    base-url: http://10.176.34.96:7777
+    base-url: http://47.102.136.106:5556
     # API请求超时时间（秒）
     timeout: 30
     # 默认仓库路径
@@ -148,7 +148,7 @@ spring:
 
 kernel:
   source:
-    path: /home/fdse/ytest/codeMap/linux/repo
+    path: /home/linux
   analysis:
     max-results: 10
     timeout: 15
@@ -166,7 +166,7 @@ spring:
 
 kernel:
   source:
-    path: /opt/linux-kernel
+    path: /home/linux
   analysis:
     max-results: 50
     timeout: 60
