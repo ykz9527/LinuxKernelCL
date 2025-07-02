@@ -86,8 +86,12 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         if(version == null || version.trim().isEmpty()){
             version = "v6.14"; // 默认版本先选择为6.14后续再优化。
         }
-        // 提取搜索实体 - 基于概念和上下文
+        // 提取搜索实体（LLM） - 基于概念和上下文
         List<String> searchEntities = extractSearchEntities(concept, context);
+        
+        // 静态分析：规范化搜索实体格式
+        searchEntities = normalizeSearchEntities(searchEntities);
+        
         logger.debug("准备搜索的实体: {}", searchEntities);
         
         // 同步搜索多个实体
@@ -157,6 +161,47 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                 .distinct()
                 .limit(5)  // 限制最多5个搜索实体
                 .toList();
+    }
+    
+    /**
+     * 规范化搜索实体格式
+     * 统一转换为小写，将空格替换为下划线
+     * @param entities 原始搜索实体列表
+     * @return 规范化后的搜索实体列表
+     */
+    private List<String> normalizeSearchEntities(List<String> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return entities;
+        }
+        
+        List<String> normalizedEntities = new ArrayList<>();
+        
+        for (String entity : entities) {
+            if (entity != null && !entity.trim().isEmpty()) {
+                // 1. 去除首尾空白
+                String normalized = entity.trim();
+                
+                // 2. 转换为小写
+                normalized = normalized.toLowerCase();
+                
+                // 3. 将空格替换为下划线
+                normalized = normalized.replaceAll("\\s+", "_");
+                
+                // 4. 移除多余的下划线（连续的下划线合并为单个）
+                normalized = normalized.replaceAll("_+", "_");
+                
+                // 5. 移除开头和结尾的下划线
+                normalized = normalized.replaceAll("^_+|_+$", "");
+                
+                // 6. 确保规范化后的实体不为空且长度合理
+                if (!normalized.isEmpty() && normalized.length() > 1) {
+                    normalizedEntities.add(normalized);
+                }
+            }
+        }
+        
+        logger.debug("实体规范化完成: 原始{}个 -> 规范化{}个", entities.size(), normalizedEntities.size());
+        return normalizedEntities;
     }
     
     /**
@@ -998,119 +1043,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             result.getTotalRelatedConcepts()
         );
     }
-
-    /**
-     * 概念翻译结果内部类
-     */
-    private static class ConceptTranslationResult {
-        private final String primaryTerm;
-        private final List<String> alternativeTerms;
-        private final String explanation;
-
-        public ConceptTranslationResult(String primaryTerm, List<String> alternativeTerms, String explanation) {
-            this.primaryTerm = primaryTerm;
-            this.alternativeTerms = alternativeTerms != null ? alternativeTerms : new ArrayList<>();
-            this.explanation = explanation;
-        }
-
-        // Getters
-        public String getPrimaryTerm() { return primaryTerm; }
-        public List<String> getAlternativeTerms() { return alternativeTerms; }
-        public String getExplanation() { return explanation; }
-    }
-
-    /**
-     * 翻译和标准化概念为Linux内核术语
-     */
-    private ConceptTranslationResult translateAndStandardizeConcept(String concept, String context) {
-        try {
-            logger.debug("开始翻译概念: concept={}, context={}", concept, context);
-            
-            // 构建AI翻译提示词
-            String prompt = Prompt.translateConceptToKernelTerms(concept, context);
-            
-            // 调用AI进行翻译
-            String aiResponse = AIService.deepseek(prompt);
-            
-            if (aiResponse != null && !aiResponse.trim().isEmpty()) {
-                // 解析AI响应
-                return parseTranslationResponse(concept, aiResponse);
-            } else {
-                logger.warn("AI翻译返回空结果，使用原概念");
-                return new ConceptTranslationResult(concept, List.of(), "未能获取AI翻译结果");
-            }
-            
-        } catch (Exception e) {
-            logger.error("概念翻译失败，使用原概念: {}", e.getMessage());
-            return new ConceptTranslationResult(concept, List.of(), "翻译失败，使用原概念");
-        }
-    }
-
-    /**
-     * 解析AI翻译响应
-     */
-    private ConceptTranslationResult parseTranslationResponse(String originalConcept, String aiResponse) {
-        try {
-            // 清理AI响应中的markdown格式
-            String cleanedResponse = cleanJsonResponse(aiResponse);
-            logger.debug("清理后的翻译响应: {}", cleanedResponse);
-            
-            // 尝试解析JSON响应
-            ObjectMapper mapper = new ObjectMapper();
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> response = mapper.readValue(cleanedResponse, java.util.Map.class);
-            
-            String primaryTerm = (String) response.get("primaryTerm");
-            @SuppressWarnings("unchecked")
-            List<String> alternativeTerms = (List<String>) response.get("alternativeTerms");
-            String explanation = (String) response.get("explanation");
-            
-            if (primaryTerm != null && !primaryTerm.trim().isEmpty()) {
-                logger.debug("翻译成功: 原概念='{}', 主术语='{}', 备选术语={}", 
-                    originalConcept, primaryTerm, alternativeTerms);
-                
-                return new ConceptTranslationResult(
-                    primaryTerm.trim(), 
-                    alternativeTerms != null ? alternativeTerms : new ArrayList<>(), 
-                    explanation != null ? explanation : "AI翻译结果"
-                );
-            }
-            
-        } catch (Exception e) {
-            logger.warn("解析翻译响应失败: {}", e.getMessage());
-            logger.debug("原始翻译响应: {}", aiResponse);
-        }
-        
-        // 解析失败，使用原概念
-        return new ConceptTranslationResult(originalConcept, List.of(), "翻译解析失败，使用原概念");
-    }
-
-    /**
-     * 构建搜索词列表
-     */
-    private List<String> buildSearchTerms(ConceptTranslationResult translationResult) {
-        List<String> searchTerms = new ArrayList<>();
-        
-        // 添加主要术语
-        if (translationResult.getPrimaryTerm() != null && !translationResult.getPrimaryTerm().trim().isEmpty()) {
-            searchTerms.add(translationResult.getPrimaryTerm().trim());
-        }
-        
-        // 添加备选术语
-        for (String altTerm : translationResult.getAlternativeTerms()) {
-            if (altTerm != null && !altTerm.trim().isEmpty() && !searchTerms.contains(altTerm.trim())) {
-                searchTerms.add(altTerm.trim());
-            }
-        }
-        
-        // 如果没有找到任何翻译术语，至少保留原始概念
-        if (searchTerms.isEmpty()) {
-            searchTerms.add(translationResult.getPrimaryTerm()); // primaryTerm在fallback情况下是原概念
-        }
-        
-        logger.debug("构建的搜索词列表: {}", searchTerms);
-        return searchTerms;
-    }
+  
 
     @Override
     public ConceptValidationResultDTO validateConcept(String concept, String context) {
