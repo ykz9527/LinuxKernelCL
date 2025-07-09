@@ -151,9 +151,17 @@ public class CodeTraceServiceImpl implements CodeTraceService {
     private CodeTraceResultDTO fetchCommitHistory(String methodName, String filePaths, String version, String targetCommit) {
         logger.debug("开始获取commit历史: methodName={}, filePaths={}, version={}, targetCommit={}", methodName, filePaths, version, targetCommit);
         
+        // 在现有的 logger.debug 语句后添加 version 预处理逻辑
+        // 处理 version 参数，移除 "v" 开头
+        if (version != null && !version.isEmpty() && version.startsWith("v") && version.length() > 1) {
+            version = version.substring(1);
+            logger.debug("移除版本号前缀'v': 处理后的版本号为 {}", version);
+        }
+        
         CodeTraceResultDTO result = new CodeTraceResultDTO();
         
         try {
+            
             // 构建API请求URL
             String apiUrl = buildTrackerApiUrl(methodName, filePaths, version, targetCommit);
             logger.info("调用tracker API: {}", apiUrl);

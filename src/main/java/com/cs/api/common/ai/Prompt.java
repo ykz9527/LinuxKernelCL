@@ -308,7 +308,7 @@ public class Prompt {
             3. The technical significance of these relationships
 
             Focus on practical implications and system architecture aspects.
-            Use technical language appropriate for kernel developers.
+            Use technical language appropriate for kernel developers.用中文回答
 
             Summary:""",
             coreConcept, relationshipCount, strongRelList

@@ -276,8 +276,8 @@ public class EntityLinkController {
             );
             
             if (result.isExists()) {
-                logger.info("概念验证成功，概念存在: concept={}, matchCount={}, confidence={}", 
-                    request.getConcept(), result.getMatchCount(), result.getConfidence());
+                logger.info("概念验证成功，概念存在: concept={}, matchCount={}", 
+                    request.getConcept(), result.getMatchCount());
             } else {
                 logger.info("概念验证完成，概念不存在: concept={}", request.getConcept());
             }

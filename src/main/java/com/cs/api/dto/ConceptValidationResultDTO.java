@@ -26,9 +26,6 @@ public class ConceptValidationResultDTO {
     @Schema(description = "最佳匹配的概念定义")
     private String bestMatchDefinition;
 
-    @Schema(description = "匹配置信度（0.0-1.0），当有多个同名概念时通过上下文判断")
-    private Double confidence;
-
     @Schema(description = "验证详情说明")
     private String details;
 
@@ -37,13 +34,12 @@ public class ConceptValidationResultDTO {
 
     public ConceptValidationResultDTO(String concept, boolean exists, int matchCount, 
                                      String bestMatchConcept, String bestMatchDefinition, 
-                                     Double confidence, String details) {
+                                     String details) {
         this.concept = concept;
         this.exists = exists;
         this.matchCount = matchCount;
         this.bestMatchConcept = bestMatchConcept;
         this.bestMatchDefinition = bestMatchDefinition;
-        this.confidence = confidence;
         this.details = details;
     }
 
@@ -89,14 +85,6 @@ public class ConceptValidationResultDTO {
         this.bestMatchDefinition = bestMatchDefinition;
     }
 
-    public Double getConfidence() {
-        return confidence;
-    }
-
-    public void setConfidence(Double confidence) {
-        this.confidence = confidence;
-    }
-
     public String getDetails() {
         return details;
     }
@@ -113,7 +101,6 @@ public class ConceptValidationResultDTO {
                 ", matchCount=" + matchCount +
                 ", bestMatchConcept='" + bestMatchConcept + '\'' +
                 ", bestMatchDefinition='" + bestMatchDefinition + '\'' +
-                ", confidence=" + confidence +
                 ", details='" + details + '\'' +
                 '}';
     }

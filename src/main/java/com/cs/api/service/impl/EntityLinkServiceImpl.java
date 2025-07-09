@@ -27,6 +27,7 @@ import com.cs.api.service.analyzer.KernelCodeAnalyzer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.io.IOException;
+import java.util.Comparator;
 
 /**
  * Linux内核代码搜索服务实现类
@@ -129,6 +131,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         entities.add(concept);
         
         try {
+            
             // 1. 使用大模型生成概念变体
             logger.debug("使用AI模型生成概念变体: concept={}, context={}", concept, context);
             String prompt = Prompt.generateConceptVariants(concept, context);
@@ -151,23 +154,245 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             logger.warn("AI模型调用失败，使用后备策略: {}", e.getMessage());
         }
         
-            // // 根据概念直接匹配
-            // for (Map.Entry<String, String[]> entry : conceptToEntities.entrySet()) {
-            //     if (concept.contains(entry.getKey())) {
-            //         for (String entity : entry.getValue()) {
-            //             entities.add(entity);
-            //         }
-            //         break;
-            //     }
-            // }
-            
-        // }
+        // 2. 使用启发式规则生成概念变体
+        logger.debug("使用启发式规则生成概念变体");
+        List<String> heuristicVariants = generateHeuristicVariants(concept);
+        entities.addAll(heuristicVariants);
+        logger.debug("启发式规则生成了{}个变体: {}", heuristicVariants.size(), heuristicVariants);
         
         // 3. 去重并限制数量（避免过多搜索实体影响性能）
         return entities.stream()
                 .distinct()
                 .limit(5)  // 限制最多5个搜索实体
                 .toList();
+    }
+    
+    /**
+     * 使用启发式规则生成概念变体
+     * 通过多种命名转换规则生成搜索变体，提高搜索命中率
+     * @param concept 原始概念
+     * @return 生成的概念变体列表
+     */
+    private List<String> generateHeuristicVariants(String concept) {
+        if (concept == null || concept.trim().isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        Set<String> variants = new HashSet<>();
+        String cleanConcept = concept.trim();
+        
+        // 1. 基本大小写变体
+        variants.add(cleanConcept.toLowerCase());
+        variants.add(cleanConcept.toUpperCase());
+        variants.add(capitalizeFirstLetter(cleanConcept.toLowerCase()));
+        
+        // 2. 空格和下划线转换
+        if (cleanConcept.contains(" ")) {
+            // 空格转下划线
+            variants.add(cleanConcept.replaceAll("\\s+", "_"));
+            variants.add(cleanConcept.toLowerCase().replaceAll("\\s+", "_"));
+            variants.add(cleanConcept.toUpperCase().replaceAll("\\s+", "_"));
+            
+            // 空格转连字符
+            variants.add(cleanConcept.replaceAll("\\s+", "-"));
+            variants.add(cleanConcept.toLowerCase().replaceAll("\\s+", "-"));
+            
+            // 去除空格
+            variants.add(cleanConcept.replaceAll("\\s+", ""));
+            variants.add(cleanConcept.toLowerCase().replaceAll("\\s+", ""));
+        }
+        
+        if (cleanConcept.contains("_")) {
+            // 下划线转空格
+            variants.add(cleanConcept.replaceAll("_", " "));
+            variants.add(cleanConcept.toLowerCase().replaceAll("_", " "));
+            
+            // 下划线转连字符
+            variants.add(cleanConcept.replaceAll("_", "-"));
+            variants.add(cleanConcept.toLowerCase().replaceAll("_", "-"));
+            
+            // 去除下划线
+            variants.add(cleanConcept.replaceAll("_", ""));
+            variants.add(cleanConcept.toLowerCase().replaceAll("_", ""));
+        }
+        
+        if (cleanConcept.contains("-")) {
+            // 连字符转下划线
+            variants.add(cleanConcept.replaceAll("-", "_"));
+            variants.add(cleanConcept.toLowerCase().replaceAll("-", "_"));
+            
+            // 连字符转空格
+            variants.add(cleanConcept.replaceAll("-", " "));
+            variants.add(cleanConcept.toLowerCase().replaceAll("-", " "));
+            
+            // 去除连字符
+            variants.add(cleanConcept.replaceAll("-", ""));
+            variants.add(cleanConcept.toLowerCase().replaceAll("-", ""));
+        }
+        
+        // 3. 驼峰命名转换
+        String camelToCamel = convertToCamelCase(cleanConcept);
+        if (!camelToCamel.equals(cleanConcept)) {
+            variants.add(camelToCamel);
+        }
+        
+        String camelToSnake = convertCamelToSnakeCase(cleanConcept);
+        if (!camelToSnake.equals(cleanConcept)) {
+            variants.add(camelToSnake);
+            variants.add(camelToSnake.toUpperCase());
+        }
+        
+        String snakeToCamel = convertSnakeToCamelCase(cleanConcept);
+        if (!snakeToCamel.equals(cleanConcept)) {
+            variants.add(snakeToCamel);
+            variants.add(capitalizeFirstLetter(snakeToCamel));
+        }
+        
+        // 4. Linux内核常见前缀/后缀变体
+        variants.addAll(generateKernelPrefixSuffixVariants(cleanConcept));
+        
+        // 5. 过滤和清理变体
+        List<String> filteredVariants = variants.stream()
+                .filter(v -> v != null && !v.trim().isEmpty())
+                .filter(v -> v.length() > 1 && v.length() < 50) // 长度合理
+                .filter(v -> !v.equals(cleanConcept)) // 排除原始概念
+                .distinct()
+                .limit(10) // 限制变体数量避免过多
+                .collect(Collectors.toList());
+        
+        logger.debug("为概念'{}'生成{}个启发式变体", cleanConcept, filteredVariants.size());
+        return filteredVariants;
+    }
+    
+    /**
+     * 首字母大写
+     */
+    private String capitalizeFirstLetter(String str) {
+        if (str == null || str.isEmpty()) {
+            return str;
+        }
+        return str.substring(0, 1).toUpperCase() + str.substring(1);
+    }
+    
+    /**
+     * 转换为驼峰命名
+     */
+    private String convertToCamelCase(String str) {
+        if (str == null || str.isEmpty()) {
+            return str;
+        }
+        
+        String[] words = str.split("[\\s_-]+");
+        if (words.length <= 1) {
+            return str;
+        }
+        
+        StringBuilder camelCase = new StringBuilder();
+        camelCase.append(words[0].toLowerCase());
+        
+        for (int i = 1; i < words.length; i++) {
+            if (!words[i].isEmpty()) {
+                camelCase.append(capitalizeFirstLetter(words[i].toLowerCase()));
+            }
+        }
+        
+        return camelCase.toString();
+    }
+    
+    /**
+     * 驼峰命名转下划线命名
+     */
+    private String convertCamelToSnakeCase(String str) {
+        if (str == null || str.isEmpty()) {
+            return str;
+        }
+        
+        return str.replaceAll("([a-z])([A-Z])", "$1_$2").toLowerCase();
+    }
+    
+    /**
+     * 下划线命名转驼峰命名
+     */
+    private String convertSnakeToCamelCase(String str) {
+        if (str == null || str.isEmpty() || !str.contains("_")) {
+            return str;
+        }
+        
+        String[] parts = str.split("_");
+        if (parts.length <= 1) {
+            return str;
+        }
+        
+        StringBuilder camelCase = new StringBuilder();
+        camelCase.append(parts[0].toLowerCase());
+        
+        for (int i = 1; i < parts.length; i++) {
+            if (!parts[i].isEmpty()) {
+                camelCase.append(capitalizeFirstLetter(parts[i].toLowerCase()));
+            }
+        }
+        
+        return camelCase.toString();
+    }
+    
+    /**
+     * 生成Linux内核常见前缀/后缀变体
+     */
+    private List<String> generateKernelPrefixSuffixVariants(String concept) {
+        List<String> variants = new ArrayList<>();
+        String lowerConcept = concept.toLowerCase();
+        
+        // 常见的Linux内核前缀
+        String[] commonPrefixes = {"linux_", "kernel_", "sys_", "__", "struct ", "enum "};
+        
+        // 常见的Linux内核后缀  
+        String[] commonSuffixes = {"_t", "_struct", "_s", "_info", "_data", "_ops", "_func"};
+        
+        // 尝试添加前缀
+        for (String prefix : commonPrefixes) {
+            if (!lowerConcept.startsWith(prefix.toLowerCase())) {
+                variants.add(prefix + lowerConcept);
+                variants.add(prefix + concept);
+            }
+        }
+        
+        // 尝试添加后缀
+        for (String suffix : commonSuffixes) {
+            if (!lowerConcept.endsWith(suffix.toLowerCase())) {
+                variants.add(lowerConcept + suffix);
+                variants.add(concept + suffix);
+            }
+        }
+        
+        // 尝试移除前缀（如果概念以这些前缀开头）
+        for (String prefix : commonPrefixes) {
+            String prefixLower = prefix.toLowerCase();
+            if (lowerConcept.startsWith(prefixLower) && lowerConcept.length() > prefixLower.length()) {
+                String withoutPrefix = lowerConcept.substring(prefixLower.length());
+                if (withoutPrefix.length() > 1) {
+                    variants.add(withoutPrefix);
+                    variants.add(capitalizeFirstLetter(withoutPrefix));
+                }
+            }
+        }
+        
+        // 尝试移除后缀（如果概念以这些后缀结尾）
+        for (String suffix : commonSuffixes) {
+            String suffixLower = suffix.toLowerCase();
+            if (lowerConcept.endsWith(suffixLower) && lowerConcept.length() > suffixLower.length()) {
+                String withoutSuffix = lowerConcept.substring(0, lowerConcept.length() - suffixLower.length());
+                if (withoutSuffix.length() > 1) {
+                    variants.add(withoutSuffix);
+                    variants.add(capitalizeFirstLetter(withoutSuffix));
+                }
+            }
+        }
+        
+        return variants.stream()
+                .filter(v -> v != null && !v.trim().isEmpty())
+                .filter(v -> !v.equals(concept) && !v.equals(lowerConcept))
+                .distinct()
+                .collect(Collectors.toList());
     }
     
     /**
@@ -1115,7 +1340,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                 0, 
                 null, 
                 null, 
-                0.0, 
                 "在概念数据库中未找到匹配的概念"
             );
         }
@@ -1123,7 +1347,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         if (matches.size() == 1) {
             // 只有一个匹配的概念
             EntityExtractionDTO match = matches.get(0);
-            double confidence = isExactMatch ? 1.0 : 0.8;
             String details = isExactMatch ? "在概念数据库中找到精确匹配的概念" : "在概念数据库中找到相似的概念";
                 
             return new ConceptValidationResultDTO(
@@ -1132,7 +1355,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                 1,
                 match.getNameEn(),
                 match.getDefinitionEn(),
-                confidence,
                 details
             );
         }
@@ -1201,7 +1423,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         prompt.append("请返回JSON格式的结果，不要使用markdown代码块包装，直接返回纯JSON:\n");
         prompt.append("{\n");
         prompt.append("  \"bestMatchIndex\": <最佳匹配的序号(1-based)>,\n");
-        prompt.append("  \"confidence\": <置信度(0.0-1.0)>,\n");
         prompt.append("  \"reasoning\": \"<判断理由>\"\n");
         prompt.append("}\n\n");
         prompt.append("注意：请确保返回的是有效的JSON格式，不要添加任何```json或```标记。");
@@ -1227,16 +1448,10 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             java.util.Map<String, Object> response = mapper.readValue(cleanedResponse, java.util.Map.class);
             
             Integer bestMatchIndex = (Integer) response.get("bestMatchIndex");
-            Double confidence = ((Number) response.get("confidence")).doubleValue();
             String reasoning = (String) response.get("reasoning");
             
             if (bestMatchIndex != null && bestMatchIndex >= 1 && bestMatchIndex <= matches.size()) {
                 EntityExtractionDTO bestMatch = matches.get(bestMatchIndex - 1);
-                
-                // 如果是精确匹配，提高置信度
-                if (isExactMatch && confidence < 0.9) {
-                    confidence = Math.min(1.0, confidence + 0.1);
-                }
                 
                 String details = String.format("在概念数据库中找到%d个匹配的概念。AI判断最佳匹配为第%d个概念，理由: %s", 
                     matches.size(), bestMatchIndex, reasoning);
@@ -1247,7 +1462,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                     matches.size(),
                     bestMatch.getNameEn(),
                     bestMatch.getDefinitionEn(),
-                    confidence,
                     details
                 );
             }
@@ -1297,7 +1511,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         
         // 选择第一个匹配作为默认最佳匹配
         EntityExtractionDTO bestMatch = matches.get(0);
-        double confidence = isExactMatch ? 0.9 : 0.7;
         
         String details = String.format("在概念数据库中找到%d个匹配的概念。由于AI判断失败，选择第一个匹配作为最佳结果", 
             matches.size());
@@ -1308,7 +1521,6 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             matches.size(),
             bestMatch.getNameEn(),
             bestMatch.getDefinitionEn(),
-            confidence,
             details
         );
     }
@@ -1322,17 +1534,22 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         }
         
         try {
-            // 1. 前半部分逻辑：获取Bootlin搜索结果（与searchCode相同）
-            List<CodeSearchResultDTO> searchResults = searchWithBootlin(concept, context, version);
+            // 1. 直接获取Bootlin搜索结果，不获取完整代码片段
+            List<BootlinSearchResultDTO> bootlinResults = getBootlinSearchResults(concept, context, version);
             
-            if (searchResults.isEmpty()) {
+            if (bootlinResults.isEmpty()) {
                 logger.warn("未找到相关代码进行聚类分析: concept={}", concept);
                 return createEmptyClusterResult(concept, version);
             }
             
-            // 2. 提取单行代码信息
-            List<CodeClusterResultDTO.CodeLineInfo> codeLines = extractCodeLines(searchResults);
+            // 2. 直接从Bootlin结果中提取单行代码信息
+            List<CodeClusterResultDTO.CodeLineInfo> codeLines = extractCodeLinesFromBootlinResults(bootlinResults);
             logger.debug("提取到{}行代码进行分析", codeLines.size());
+            
+            if (codeLines.isEmpty()) {
+                logger.warn("无法从Bootlin结果中提取有效代码行: concept={}", concept);
+                return createEmptyClusterResult(concept, version);
+            }
             
             // 3. 词袋模型处理
             Map<String, Integer> tokenFrequency = buildTokenFrequencyMap(codeLines);
@@ -1343,7 +1560,10 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             List<CodeClusterResultDTO.ConceptCluster> clusters = performCodeClustering(
                 concept, codeLines, coreTokens, tokenFrequency);
             
-            // 5. 构建结果
+            // 5. 为每个聚类增强：获取完整代码片段、AI解释和汇总说明
+            enhanceClusterAnalysis(clusters, concept, version);
+            
+            // 6. 构建结果
             String analysisSummary = generateClusterAnalysisSummary(concept, codeLines.size(), clusters.size());
             
             CodeClusterResultDTO result = new CodeClusterResultDTO(
@@ -1381,28 +1601,152 @@ public class EntityLinkServiceImpl implements EntityLinkService {
     }
     
     /**
-     * 从搜索结果中提取单行代码信息
+     * 直接获取Bootlin搜索结果，不进行代码片段提取
      */
-    private List<CodeClusterResultDTO.CodeLineInfo> extractCodeLines(List<CodeSearchResultDTO> searchResults) {
+    private List<BootlinSearchResultDTO> getBootlinSearchResults(String concept, String context, String version) {
+        List<BootlinSearchResultDTO> bootlinResults = new ArrayList<>();
+        
+        // 提取搜索实体（与searchWithBootlin中的逻辑相同）
+        List<String> searchEntities = extractSearchEntities(concept, context);
+        
+        // 静态分析：规范化搜索实体格式
+        searchEntities = normalizeSearchEntities(searchEntities);
+        
+        logger.debug("准备搜索的实体: {}", searchEntities);
+        
+        // 同步搜索多个实体
+        for (String entity : searchEntities) {
+            try {
+                BootlinSearchResultDTO bootlinResult = bootlinSearchService.search(entity, version);
+                if (bootlinResult != null && bootlinResult.isSuccess()) {
+                    bootlinResults.add(bootlinResult);
+                    logger.debug("Bootlin找到结果: entity={}, url={}", 
+                        bootlinResult.getEntity(), bootlinResult.getUrl());
+                }
+            } catch (Exception e) {
+                logger.warn("Bootlin搜索实体 '{}' 失败", entity, e);
+            }
+        }
+        
+        return bootlinResults;
+    }
+    
+    /**
+     * 从Bootlin搜索结果中直接提取单行代码信息
+     */
+    private List<CodeClusterResultDTO.CodeLineInfo> extractCodeLinesFromBootlinResults(List<BootlinSearchResultDTO> bootlinResults) {
         List<CodeClusterResultDTO.CodeLineInfo> codeLines = new ArrayList<>();
         
-        for (CodeSearchResultDTO result : searchResults) {
-            // 对于有targetLine的结果，只提取目标行
-            if (result.getTargetLine() != null && result.getTargetLine() > 0) {
-                String singleLineCode = extractSingleLine(result.getCodeSnippet(), result.getTargetLine(), 
-                    result.getStartLine());
-                
-                if (singleLineCode != null && !singleLineCode.trim().isEmpty()) {
-                    List<String> identifiers = extractIdentifiers(singleLineCode);
+        for (BootlinSearchResultDTO bootlinResult : bootlinResults) {
+            String version = bootlinResult.getVersion(); // 获取版本信息
+            
+            // 处理定义信息 - 标记为 "definitions"
+            if (bootlinResult.getDefinitions() != null) {
+                for (BootlinSearchResultDTO.SearchResultItem def : bootlinResult.getDefinitions()) {
+                    if (def.getType().equals("struct") || def.getType().equals("function")) {
+                        List<CodeClusterResultDTO.CodeLineInfo> defCodeLines = extractCodeLinesFromSearchItem(def, version, "definitions");
+                        codeLines.addAll(defCodeLines);
+                    }
+                }
+            }
+            
+            // 处理引用信息（限制数量） - 标记为 "references"
+            if (bootlinResult.getReferences() != null) {
+                List<BootlinSearchResultDTO.SearchResultItem> limitedRefs = bootlinResult.getReferences().stream()
+                    .limit(100)
+                    .collect(Collectors.toList());
                     
-                    CodeClusterResultDTO.CodeLineInfo codeLineInfo = new CodeClusterResultDTO.CodeLineInfo(
-                        result.getFilePath(),
-                        result.getTargetLine(),
-                        singleLineCode.trim(),
-                        identifiers,
-                        0.0 // 初始相似度，后续计算
-                    );
-                    codeLines.add(codeLineInfo);
+                for (BootlinSearchResultDTO.SearchResultItem ref : limitedRefs) {
+                    List<CodeClusterResultDTO.CodeLineInfo> refCodeLines = extractCodeLinesFromSearchItem(ref, version, "references");
+                    codeLines.addAll(refCodeLines);
+                }
+            }
+        }
+        
+        // 去重处理：基于文件路径、行号和源类型去除重复的代码行
+        List<CodeClusterResultDTO.CodeLineInfo> deduplicatedCodeLines = deduplicateCodeLines(codeLines);
+        logger.debug("代码行去重处理完成: 原始{}行 -> 去重后{}行", codeLines.size(), deduplicatedCodeLines.size());
+        
+        return deduplicatedCodeLines;
+    }
+    
+    /**
+     * 对代码行进行去重处理
+     * 基于文件路径、行号和源类型识别重复项，优先保留definitions类型的代码行
+     * 
+     * @param codeLines 原始代码行列表
+     * @return 去重后的代码行列表
+     */
+    private List<CodeClusterResultDTO.CodeLineInfo> deduplicateCodeLines(List<CodeClusterResultDTO.CodeLineInfo> codeLines) {
+        if (codeLines == null || codeLines.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        // 使用LinkedHashMap保持插入顺序，同时实现去重
+        Map<String, CodeClusterResultDTO.CodeLineInfo> uniqueCodeLines = new LinkedHashMap<>();
+        
+        for (CodeClusterResultDTO.CodeLineInfo codeLine : codeLines) {
+            // 创建基于文件路径和行号的唯一键
+            String uniqueKey = generateUniqueKey(codeLine.getFilePath(), codeLine.getLineNumber());
+            
+            if (!uniqueCodeLines.containsKey(uniqueKey)) {
+                // 首次出现，直接添加
+                uniqueCodeLines.put(uniqueKey, codeLine);
+            } else {
+                // 已存在相同位置的代码行，优先保留definitions类型
+                CodeClusterResultDTO.CodeLineInfo existingLine = uniqueCodeLines.get(uniqueKey);
+                if ("definitions".equals(codeLine.getSourceType()) && 
+                    !"definitions".equals(existingLine.getSourceType())) {
+                    // 新的是definitions类型，现有的不是，则替换
+                    uniqueCodeLines.put(uniqueKey, codeLine);
+                    logger.debug("代码行去重：优先保留definitions类型 {}:{}", 
+                        codeLine.getFilePath(), codeLine.getLineNumber());
+                } else {
+                    // 其他情况保持原有的代码行（先到先得）
+                    logger.debug("代码行去重：跳过重复项 {}:{}", 
+                        codeLine.getFilePath(), codeLine.getLineNumber());
+                }
+            }
+        }
+        
+        return new ArrayList<>(uniqueCodeLines.values());
+    }
+    
+    /**
+     * 生成基于文件路径和行号的唯一键
+     * 
+     * @param filePath 文件路径
+     * @param lineNumber 行号
+     * @return 唯一键字符串
+     */
+    private String generateUniqueKey(String filePath, int lineNumber) {
+        return filePath + ":" + lineNumber;
+    }
+    
+    /**
+     * 从单个搜索结果项中提取代码行
+     */
+    private List<CodeClusterResultDTO.CodeLineInfo> extractCodeLinesFromSearchItem(BootlinSearchResultDTO.SearchResultItem item, String version, String sourceType) {
+        List<CodeClusterResultDTO.CodeLineInfo> codeLines = new ArrayList<>();
+        
+        if (item.getLine() != null && !item.getLine().isEmpty()) {
+            for (String lineStr : item.getLine()) {
+                int lineNumber = parseLineNumber(lineStr);
+                if (lineNumber > 0) {
+                    // 使用Git命令从指定版本读取文件的指定行
+                    String singleLineCode = readSingleLineFromFile(item.getPath(), lineNumber, version);
+                    if (singleLineCode != null && !singleLineCode.trim().isEmpty()) {
+                        List<String> identifiers = extractIdentifiers(singleLineCode);
+                        
+                        CodeClusterResultDTO.CodeLineInfo codeLineInfo = new CodeClusterResultDTO.CodeLineInfo(
+                            item.getPath(),
+                            lineNumber,
+                            singleLineCode.trim(),
+                            identifiers,
+                            sourceType  // 添加来源标记
+                        );
+                        codeLines.add(codeLineInfo);
+                    }
                 }
             }
         }
@@ -1411,21 +1755,72 @@ public class EntityLinkServiceImpl implements EntityLinkService {
     }
     
     /**
-     * 从代码片段中提取指定行号的单行代码
+     * 从指定文件的指定行号读取单行代码，使用Git命令获取指定版本的文件内容
      */
-    private String extractSingleLine(String codeSnippet, int targetLine, int startLine) {
-        if (codeSnippet == null || codeSnippet.trim().isEmpty()) {
+    private String readSingleLineFromFile(String filePath, int lineNumber, String version) {
+        try {
+            // 使用Git命令获取指定版本的文件内容
+            List<String> lines = readFileFromGitVersion(filePath, version);
+            
+            if (lines != null && lineNumber > 0 && lineNumber <= lines.size()) {
+                return lines.get(lineNumber - 1); // 行号从1开始，数组从0开始
+            } else {
+                logger.debug("行号超出范围或文件不存在: file={}, line={}, totalLines={}, version={}", 
+                    filePath, lineNumber, lines != null ? lines.size() : 0, version);
+                return null;
+            }
+        } catch (Exception e) {
+            logger.warn("读取单行代码异常: file={}, line={}, version={}", filePath, lineNumber, version, e);
             return null;
         }
-        
-        String[] lines = codeSnippet.split("\n");
-        int targetIndex = targetLine - startLine;
-        
-        if (targetIndex >= 0 && targetIndex < lines.length) {
-            return lines[targetIndex];
+    }
+    
+    /**
+     * 使用Git命令从指定版本读取文件内容
+     * @param filePath 文件路径
+     * @param version 版本标签（如v6.14）
+     * @return 文件行列表，如果读取失败返回null
+     */
+    private List<String> readFileFromGitVersion(String filePath, String version) {
+        try {
+            // 构建Git命令：git show <version>:<file_path>
+            ProcessBuilder pb = new ProcessBuilder("git", "show", version + ":" + filePath);
+            pb.directory(new java.io.File(kernelSourcePath)); // 设置工作目录
+            pb.redirectErrorStream(true); // 合并错误流和标准输出流
+            
+            Process process = pb.start();
+            
+            // 读取命令输出
+            List<String> lines = new ArrayList<>();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    lines.add(line);
+                }
+            }
+            
+            // 等待命令完成
+            int exitCode = process.waitFor();
+            if (exitCode == 0) {
+                logger.debug("Git命令成功: file={}, version={}, lines={}", filePath, version, lines.size());
+                return lines;
+            } else {
+                logger.debug("Git命令失败: file={}, version={}, exitCode={}", filePath, version, exitCode);
+                return null;
+            }
+            
+        } catch (IOException e) {
+            logger.debug("执行Git命令失败: file={}, version={}, error={}", filePath, version, e.getMessage());
+            return null;
+        } catch (InterruptedException e) {
+            logger.debug("Git命令被中断: file={}, version={}", filePath, version);
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Exception e) {
+            logger.warn("Git命令异常: file={}, version={}", filePath, version, e);
+            return null;
         }
-        
-        return null;
     }
     
     /**
@@ -1577,38 +1972,72 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         
         Map<String, List<CodeClusterResultDTO.CodeLineInfo>> clusters = new HashMap<>();
         
-        // 为每个核心概念创建聚类
+        // 1. 首先创建默认聚类组用于存放 definitions 代码段
+        String defaultClusterName = "核心定义";
+        clusters.put(defaultClusterName, new ArrayList<>());
+        
+        // 2. 为每个核心概念创建聚类
         for (String coreToken : coreTokens) {
             clusters.put(coreToken, new ArrayList<>());
         }
         
-        // 将代码行分配到聚类
+        // 3. 优先将 definitions 代码行分配到默认聚类组
+        List<CodeClusterResultDTO.CodeLineInfo> remainingCodeLines = new ArrayList<>();
+        
         for (CodeClusterResultDTO.CodeLineInfo codeLine : codeLines) {
-            String bestMatch = findBestMatchingConcept(codeLine, coreTokens);
-            if (bestMatch != null) {
-                clusters.get(bestMatch).add(codeLine);
-                // 计算相似度
-                double similarity = calculateSimilarity(codeLine, bestMatch);
-                codeLine.setSimilarity(similarity);
+            if ("definitions".equals(codeLine.getSourceType())) {
+                // definitions 代码行直接放入默认聚类组
+                clusters.get(defaultClusterName).add(codeLine);
+                logger.debug("将 definitions 代码行分配到默认聚类: {}:{}", 
+                    codeLine.getFilePath(), codeLine.getLineNumber());
+            } else {
+                // 其他代码行留待后续处理
+                remainingCodeLines.add(codeLine);
             }
         }
         
-        // 构建聚类结果
-        List<CodeClusterResultDTO.ConceptCluster> result = new ArrayList<>();
-        for (Map.Entry<String, List<CodeClusterResultDTO.CodeLineInfo>> entry : clusters.entrySet()) {
-            if (!entry.getValue().isEmpty()) {
-                String concept = entry.getKey();
-                List<CodeClusterResultDTO.CodeLineInfo> clusterLines = entry.getValue();
-                
-                CodeClusterResultDTO.ConceptCluster cluster = new CodeClusterResultDTO.ConceptCluster(
-                    concept,
-                    tokenFrequency.get(concept),
-                    calculateClusterConfidence(clusterLines),
-                    clusterLines,
-                    List.of(concept) // 简化版核心词汇
-                );
-                result.add(cluster);
+        // 4. 将剩余代码行（主要是 references）按原有逻辑分配到其他聚类
+        for (CodeClusterResultDTO.CodeLineInfo codeLine : remainingCodeLines) {
+            String bestMatch = findBestMatchingConcept(codeLine, coreTokens);
+            if (bestMatch != null) {
+                clusters.get(bestMatch).add(codeLine);
             }
+        }
+        
+        // 5. 构建聚类结果
+        List<CodeClusterResultDTO.ConceptCluster> result = new ArrayList<>();
+        
+        // 首先添加默认聚类组（definitions）
+        List<CodeClusterResultDTO.CodeLineInfo> defaultClusterLines = clusters.get(defaultClusterName);
+        if (!defaultClusterLines.isEmpty()) {
+            CodeClusterResultDTO.ConceptCluster defaultCluster = new CodeClusterResultDTO.ConceptCluster(
+                defaultClusterName,
+                defaultClusterLines.size(), // 使用代码行数作为频次
+                defaultClusterLines,
+                List.of(originalConcept, "definition", "核心") // 设置相关核心词汇
+            );
+            result.add(defaultCluster);
+            logger.debug("创建默认聚类组: {}, 包含{}行代码", defaultClusterName, defaultClusterLines.size());
+        }
+        
+        // 然后添加其他概念聚类
+        for (Map.Entry<String, List<CodeClusterResultDTO.CodeLineInfo>> entry : clusters.entrySet()) {
+            String concept = entry.getKey();
+            List<CodeClusterResultDTO.CodeLineInfo> clusterLines = entry.getValue();
+            
+            // 跳过默认聚类组（已处理）和空聚类
+            if (concept.equals(defaultClusterName) || clusterLines.isEmpty()) {
+                continue;
+            }
+            
+            CodeClusterResultDTO.ConceptCluster cluster = new CodeClusterResultDTO.ConceptCluster(
+                concept,
+                tokenFrequency.get(concept),
+                clusterLines,
+                List.of(concept) // 简化版核心词汇
+            );
+            result.add(cluster);
+            logger.debug("创建概念聚类: {}, 包含{}行代码", concept, clusterLines.size());
         }
         
         return result;
@@ -1630,38 +2059,552 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         // 如果没有直接匹配，返回第一个核心概念（作为默认）
         return coreTokens.isEmpty() ? null : coreTokens.get(0);
     }
-    
+
     /**
-     * 计算代码行与概念的相似度
+     * 为聚类结果进行增强分析
+     * 获取完整代码片段、生成AI解释和汇总说明
+     * 
+     * @param clusters 聚类结果列表
+     * @param concept 原始搜索概念
+     * @param version Git版本
      */
-    private double calculateSimilarity(CodeClusterResultDTO.CodeLineInfo codeLine, String concept) {
-        List<String> allTokens = new ArrayList<>();
-        for (String identifier : codeLine.getIdentifiers()) {
-            allTokens.addAll(tokenizeIdentifier(identifier));
+    private void enhanceClusterAnalysis(List<CodeClusterResultDTO.ConceptCluster> clusters, String concept, String version) {
+        logger.info("开始为{}个聚类进行增强分析", clusters.size());
+        
+        for (CodeClusterResultDTO.ConceptCluster cluster : clusters) {
+            try {
+                // 1. 获取完整代码片段
+                List<CodeSearchResultDTO> codeSnippets = getCompleteCodeSnippets(cluster, version);
+                cluster.setCodeSnippets(codeSnippets);
+                logger.debug("聚类'{}'获取到{}个完整代码片段", cluster.getClusterConcept(), codeSnippets.size());
+                
+                // 2. 使用AI同时生成解释和汇总说明
+                generateAIAnalysis(cluster, concept, codeSnippets);
+                logger.debug("聚类'{}'生成AI分析完成", cluster.getClusterConcept());
+                
+            } catch (Exception e) {
+                logger.warn("聚类'{}'增强分析失败: {}", cluster.getClusterConcept(), e.getMessage());
+                // 设置默认值确保结构完整
+                cluster.setCodeSnippets(new ArrayList<>());
+                cluster.setClusterSummary("该聚类包含与'" + cluster.getClusterConcept() + "'相关的代码");
+            }
         }
         
-        long matchCount = allTokens.stream()
-                .map(String::toLowerCase)
-                .filter(token -> token.equals(concept))
-                .count();
-        
-        return allTokens.isEmpty() ? 0.0 : (double) matchCount / allTokens.size();
+        logger.info("聚类增强分析完成");
     }
     
     /**
-     * 计算聚类的置信度
+     * 获取聚类中每个代码行的完整代码片段 - 优化版本
+     * 通过智能采样、文件级缓存和去重来提高性能
+     * 
+     * @param cluster 概念聚类
+     * @param version Git版本
+     * @return 完整代码片段列表
      */
-    private double calculateClusterConfidence(List<CodeClusterResultDTO.CodeLineInfo> clusterLines) {
-        if (clusterLines.isEmpty()) {
-            return 0.0;
+    private List<CodeSearchResultDTO> getCompleteCodeSnippets(CodeClusterResultDTO.ConceptCluster cluster, String version) {
+        List<CodeSearchResultDTO> codeSnippets = new ArrayList<>();
+        
+        // 1. 性能优化：限制处理的代码行数量，避免处理几百行
+        List<CodeClusterResultDTO.CodeLineInfo> selectedLines = selectRepresentativeCodeLines(cluster.getCodeLines());
+        logger.debug("从{}行代码中选择{}行进行详细分析", cluster.getCodeLines().size(), selectedLines.size());
+        
+        // 2. 按文件分组，实现文件级批量处理
+        Map<String, List<CodeClusterResultDTO.CodeLineInfo>> fileGroups = groupCodeLinesByFile(selectedLines);
+        logger.debug("代码行分布在{}个文件中", fileGroups.size());
+        
+        // 3. 为每个文件批量获取代码片段
+        for (Map.Entry<String, List<CodeClusterResultDTO.CodeLineInfo>> entry : fileGroups.entrySet()) {
+            String filePath = entry.getKey();
+            List<CodeClusterResultDTO.CodeLineInfo> fileLines = entry.getValue();
+            
+            try {
+                // 批量处理同一文件的多行
+                List<CodeSearchResultDTO> fileSnippets = getCodeSnippetsForFile(filePath, fileLines, cluster.getClusterConcept(), version);
+                codeSnippets.addAll(fileSnippets);
+                logger.debug("文件{}成功获取{}个代码片段", filePath, fileSnippets.size());
+            } catch (Exception e) {
+                logger.warn("处理文件{}的代码片段失败: {}", filePath, e.getMessage());
+                // 为失败的文件创建简化版本
+                List<CodeSearchResultDTO> fallbackSnippets = createFallbackSnippetsForFile(filePath, fileLines, cluster.getClusterConcept(), version);
+                codeSnippets.addAll(fallbackSnippets);
+            }
         }
         
-        double avgSimilarity = clusterLines.stream()
-                .mapToDouble(CodeClusterResultDTO.CodeLineInfo::getSimilarity)
-                .average()
-                .orElse(0.0);
+        // 4. 最终去重和排序
+        List<CodeSearchResultDTO> finalResults = deduplicateAndSortCodeSnippets(codeSnippets);
+        logger.debug("最终返回{}个去重后的代码片段", finalResults.size());
         
-        return Math.min(avgSimilarity * 2, 1.0); // 简单的置信度计算
+        return finalResults;
+    }
+    
+    /**
+     * 智能选择有代表性的代码行，避免处理过多行数
+     * 
+     * @param allCodeLines 所有代码行
+     * @return 选择的代表性代码行
+     */
+    private List<CodeClusterResultDTO.CodeLineInfo> selectRepresentativeCodeLines(List<CodeClusterResultDTO.CodeLineInfo> allCodeLines) {
+        if (allCodeLines.size() <= 10) {
+            // 如果总数不多，直接返回所有行
+            return new ArrayList<>(allCodeLines);
+        }
+        
+        List<CodeClusterResultDTO.CodeLineInfo> selected = new ArrayList<>();
+        
+        // 1. 按文件分组
+        Map<String, List<CodeClusterResultDTO.CodeLineInfo>> fileGroups = allCodeLines.stream()
+                .collect(Collectors.groupingBy(CodeClusterResultDTO.CodeLineInfo::getFilePath));
+        
+        // 2. 为每个文件选择代表性行
+        for (Map.Entry<String, List<CodeClusterResultDTO.CodeLineInfo>> entry : fileGroups.entrySet()) {
+            List<CodeClusterResultDTO.CodeLineInfo> fileLines = entry.getValue();
+            
+            if (fileLines.size() <= 3) {
+                // 文件行数较少，全部保留
+                selected.addAll(fileLines);
+            } else {
+                // 文件行数较多，智能采样
+                selected.addAll(sampleCodeLinesFromFile(fileLines));
+            }
+        }
+        
+        // 3. 如果选择的行数还是太多，进行全局采样
+        if (selected.size() > 15) {
+            selected = selected.stream()
+                    .limit(15)  // 最多保留15行
+                    .collect(Collectors.toList());
+        }
+        
+        return selected;
+    }
+    
+    /**
+     * 从单个文件中采样代表性代码行
+     * 
+     * @param fileLines 文件中的所有代码行
+     * @return 采样的代表性代码行
+     */
+    private List<CodeClusterResultDTO.CodeLineInfo> sampleCodeLinesFromFile(List<CodeClusterResultDTO.CodeLineInfo> fileLines) {
+        List<CodeClusterResultDTO.CodeLineInfo> sampled = new ArrayList<>();
+        
+        // 按行号排序
+        List<CodeClusterResultDTO.CodeLineInfo> sortedLines = fileLines.stream()
+                .sorted(Comparator.comparingInt(CodeClusterResultDTO.CodeLineInfo::getLineNumber))
+                .collect(Collectors.toList());
+        
+        // 采样策略：取开头、中间和结尾的代表性行
+        int size = sortedLines.size();
+        if (size >= 1) sampled.add(sortedLines.get(0));                    // 第一行
+        if (size >= 3) sampled.add(sortedLines.get(size / 2));             // 中间行
+        if (size >= 2) sampled.add(sortedLines.get(size - 1));             // 最后一行
+        
+        // 如果还有空间，添加更多样本
+        if (sampled.size() < 5 && size > 3) {
+            if (size >= 5) sampled.add(sortedLines.get(size / 4));         // 四分之一位置
+            if (size >= 6) sampled.add(sortedLines.get(size * 3 / 4));     // 四分之三位置
+        }
+        
+        return sampled.stream().distinct().collect(Collectors.toList());
+    }
+    
+    /**
+     * 按文件路径对代码行进行分组
+     * 
+     * @param codeLines 代码行列表
+     * @return 按文件分组的Map
+     */
+    private Map<String, List<CodeClusterResultDTO.CodeLineInfo>> groupCodeLinesByFile(List<CodeClusterResultDTO.CodeLineInfo> codeLines) {
+        return codeLines.stream()
+                .collect(Collectors.groupingBy(CodeClusterResultDTO.CodeLineInfo::getFilePath));
+    }
+    
+    /**
+     * 为单个文件批量获取代码片段
+     * 通过一次文件解析处理多行，提高效率
+     * 
+     * @param filePath 文件路径
+     * @param fileLines 文件中的代码行
+     * @param concept 概念名称
+     * @param version Git版本
+     * @return 代码片段列表
+     */
+    private List<CodeSearchResultDTO> getCodeSnippetsForFile(String filePath, List<CodeClusterResultDTO.CodeLineInfo> fileLines, 
+                                                             String concept, String version) {
+        List<CodeSearchResultDTO> snippets = new ArrayList<>();
+        
+        // 按行号排序并去重相邻行
+        List<CodeClusterResultDTO.CodeLineInfo> processedLines = preprocessFileLines(fileLines);
+        
+        // 限制每个文件最多处理5个代码片段
+        int processLimit = Math.min(processedLines.size(), 5);
+        
+        for (int i = 0; i < processLimit; i++) {
+            CodeClusterResultDTO.CodeLineInfo codeLineInfo = processedLines.get(i);
+            
+            try {
+                // 使用现有的KernelCodeAnalyzer获取完整代码片段
+                CodeSearchResultDTO completeCodeSnippet = KernelCodeAnalyzer.findCodeElementByLineNumber(
+                    codeLineInfo.getFilePath(),
+                    concept,
+                    codeLineInfo.getLineNumber(),
+                    kernelSourcePath,
+                    version
+                );
+                
+                if (completeCodeSnippet != null) {
+                    snippets.add(completeCodeSnippet);
+                    logger.debug("成功获取完整代码片段: {}:{}", 
+                        codeLineInfo.getFilePath(), codeLineInfo.getLineNumber());
+                } else {
+                    // 如果获取完整片段失败，创建一个基于单行的简化版本
+                    CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(
+                        codeLineInfo, concept, version);
+                    if (fallbackSnippet != null) {
+                        snippets.add(fallbackSnippet);
+                    }
+                }
+                
+            } catch (Exception e) {
+                logger.warn("获取代码片段失败: {}:{}, error={}", 
+                    codeLineInfo.getFilePath(), codeLineInfo.getLineNumber(), e.getMessage());
+                
+                // 创建后备片段
+                CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(codeLineInfo, concept, version);
+                if (fallbackSnippet != null) {
+                    snippets.add(fallbackSnippet);
+                }
+            }
+        }
+        
+        return snippets;
+    }
+    
+    /**
+     * 预处理文件中的代码行：排序、去重相邻行
+     * 
+     * @param fileLines 原始代码行
+     * @return 处理后的代码行
+     */
+    private List<CodeClusterResultDTO.CodeLineInfo> preprocessFileLines(List<CodeClusterResultDTO.CodeLineInfo> fileLines) {
+        // 按行号排序
+        List<CodeClusterResultDTO.CodeLineInfo> sorted = fileLines.stream()
+                .sorted(Comparator.comparingInt(CodeClusterResultDTO.CodeLineInfo::getLineNumber))
+                .collect(Collectors.toList());
+        
+        // 去重相邻行（如果行号相差小于5，认为是相邻的）
+        List<CodeClusterResultDTO.CodeLineInfo> deduplicated = new ArrayList<>();
+        int lastLineNumber = -10;
+        
+        for (CodeClusterResultDTO.CodeLineInfo line : sorted) {
+            if (line.getLineNumber() - lastLineNumber >= 5) {
+                deduplicated.add(line);
+                lastLineNumber = line.getLineNumber();
+            }
+        }
+        
+        return deduplicated;
+    }
+    
+    /**
+     * 为文件创建后备代码片段列表
+     * 
+     * @param filePath 文件路径
+     * @param fileLines 文件中的代码行
+     * @param concept 概念名称
+     * @param version Git版本
+     * @return 后备代码片段列表
+     */
+    private List<CodeSearchResultDTO> createFallbackSnippetsForFile(String filePath, List<CodeClusterResultDTO.CodeLineInfo> fileLines, 
+                                                                    String concept, String version) {
+        List<CodeSearchResultDTO> fallbackSnippets = new ArrayList<>();
+        
+        // 为每行创建简化的后备片段
+        for (CodeClusterResultDTO.CodeLineInfo codeLineInfo : fileLines) {
+            CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(codeLineInfo, concept, version);
+            if (fallbackSnippet != null) {
+                fallbackSnippets.add(fallbackSnippet);
+            }
+        }
+        
+        return fallbackSnippets;
+    }
+    
+    /**
+     * 创建后备代码片段（当无法获取完整片段时）
+     */
+    private CodeSearchResultDTO createFallbackCodeSnippet(CodeClusterResultDTO.CodeLineInfo codeLineInfo, 
+                                                          String concept, String version) {
+        String explanation = String.format(
+            "无法获取完整代码片段，显示单行代码。文件: %s, 行号: %d",
+            codeLineInfo.getFilePath(), codeLineInfo.getLineNumber()
+        );
+        
+        return new CodeSearchResultDTO(
+            codeLineInfo.getFilePath(),
+            concept,
+            codeLineInfo.getCodeContent(),
+            codeLineInfo.getLineNumber(),
+            codeLineInfo.getLineNumber(),
+            codeLineInfo.getLineNumber(),
+            explanation,
+            version,
+            "single_line"
+        );
+    }
+    
+    /**
+     * 去重并排序代码片段
+     * 
+     * @param codeSnippets 原始代码片段列表
+     * @return 去重并排序后的代码片段列表
+     */
+    private List<CodeSearchResultDTO> deduplicateAndSortCodeSnippets(List<CodeSearchResultDTO> codeSnippets) {
+        List<CodeSearchResultDTO> deduplicated = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        
+        for (CodeSearchResultDTO snippet : codeSnippets) {
+            // 使用文件路径和行号范围作为去重key
+            String key = String.format("%s:%d-%d", 
+                snippet.getFilePath(), snippet.getStartLine(), snippet.getEndLine());
+            
+            if (!seen.contains(key)) {
+                seen.add(key);
+                deduplicated.add(snippet);
+            }
+        }
+        
+        // 按文件路径和起始行号排序
+        return deduplicated.stream()
+                .sorted(Comparator.comparing(CodeSearchResultDTO::getFilePath)
+                        .thenComparingInt(CodeSearchResultDTO::getStartLine))
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * 使用AI同时生成聚类解释和汇总说明
+     * 
+     * @param cluster 概念聚类
+     * @param originalConcept 原始搜索概念
+     * @param codeSnippets 完整代码片段列表
+     */
+    private void generateAIAnalysis(CodeClusterResultDTO.ConceptCluster cluster, 
+                                   String originalConcept, List<CodeSearchResultDTO> codeSnippets) {
+        try {
+            if (codeSnippets.isEmpty()) {
+                cluster.setClusterSummary(generateFallbackSummary(cluster, originalConcept));
+                return;
+            }
+            
+            // 构建合并的AI提示词
+            String prompt = buildCombinedAnalysisPrompt(cluster, originalConcept, codeSnippets);
+            
+            // 调用AI生成分析
+            String aiResponse = AIService.deepseek(prompt);
+            
+            if (aiResponse != null && !aiResponse.trim().isEmpty()) {
+                logger.debug("AI分析响应内容: {}", aiResponse);
+                // 解析AI响应，提取解释和汇总
+                parseAIAnalysisResponse(cluster, aiResponse, originalConcept, codeSnippets);
+                logger.info("成功解析AI分析，代码片段数: {}, 聚类概念: {}", 
+                    codeSnippets.size(), cluster.getClusterConcept());
+            } else {
+                logger.warn("AI分析返回空响应，使用后备方案");
+                // 使用后备方案
+                cluster.setClusterSummary(generateFallbackSummary(cluster, originalConcept));
+            }
+            
+        } catch (Exception e) {
+            logger.warn("AI分析生成失败: cluster={}, error={}", cluster.getClusterConcept(), e.getMessage());
+            // 设置后备内容
+            cluster.setClusterSummary(generateFallbackSummary(cluster, originalConcept));
+        }
+    }
+    
+    /**
+     * 构建合并的AI分析提示词，为每个代码片段生成单独解释和整体汇总
+     */
+    private String buildCombinedAnalysisPrompt(CodeClusterResultDTO.ConceptCluster cluster, 
+                                              String originalConcept, List<CodeSearchResultDTO> codeSnippets) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("请分析以下Linux内核代码片段，这些代码都与概念'").append(cluster.getClusterConcept())
+              .append("'相关（在'").append(originalConcept).append("'的搜索上下文中）。\n\n");
+        
+        // 添加聚类基本信息
+        prompt.append("聚类信息:\n");
+        prompt.append("- 聚类概念: ").append(cluster.getClusterConcept()).append("\n");
+        prompt.append("- 原始搜索概念: ").append(originalConcept).append("\n");
+        prompt.append("- 代码行数: ").append(cluster.getCodeLines().size()).append("\n");
+        prompt.append("- 概念频次: ").append(cluster.getConceptFrequency()).append("\n\n");
+        
+        // 添加代码片段信息
+        int snippetCount = Math.min(codeSnippets.size(), 3); // 限制最多3个片段
+        for (int i = 0; i < snippetCount; i++) {
+            CodeSearchResultDTO snippet = codeSnippets.get(i);
+            prompt.append("代码片段 ").append(i + 1).append(":\n");
+            prompt.append("文件: ").append(snippet.getFilePath()).append("\n");
+            prompt.append("行号: ").append(snippet.getStartLine()).append("-").append(snippet.getEndLine()).append("\n");
+            prompt.append("类型: ").append(snippet.getType()).append("\n");
+            prompt.append("代码内容:\n```c\n").append(snippet.getCodeSnippet()).append("\n```\n\n");
+        }
+        
+        prompt.append("请严格按照以下JSON格式提供分析结果：\n\n");
+        
+        // JSON格式要求
+        prompt.append("{\n");
+        prompt.append("  \"optimizedConceptName\": \"<将'").append(cluster.getClusterConcept())
+              .append("'替换为更容易理解的中文概念名称（3-8个字）>\",\n");
+        prompt.append("  \"snippetExplanations\": [\n");
+        for (int i = 0; i < snippetCount; i++) {
+            prompt.append("    \"<针对代码片段").append(i + 1)
+                  .append("的50-80字专业解释，说明其具体功能、与概念'").append(cluster.getClusterConcept())
+                  .append("'的关系及在内核中的作用>\"");
+            if (i < snippetCount - 1) {
+                prompt.append(",");
+            }
+            prompt.append("\n");
+        }
+        prompt.append("  ],\n");
+        prompt.append("  \"overallSummary\": \"<基于所有代码片段的100-150字整体功能说明，描述它们如何共同实现与'")
+              .append(cluster.getClusterConcept()).append("'相关的功能>\"\n");
+        prompt.append("}\n\n");
+        
+        prompt.append("要求说明：\n");
+        prompt.append("1. optimizedConceptName: 优化概念名称示例 - 'from'→'数据来源', 'sched'→'任务调度', 'lock'→'锁机制'\n");
+        prompt.append("2. snippetExplanations: 数组包含").append(snippetCount).append("个解释，对应").append(snippetCount).append("个代码片段\n");
+        prompt.append("3. 请返回有效的JSON格式，不要使用markdown代码块包装\n");
+        prompt.append("4. 用中文回答，语言简洁专业");
+        
+        return prompt.toString();
+    }
+    
+    /**
+     * 解析AI分析响应，提取优化的聚类概念名称、每个代码片段的解释和整体汇总
+     */
+    private void parseAIAnalysisResponse(CodeClusterResultDTO.ConceptCluster cluster, String aiResponse, 
+                                        String originalConcept, List<CodeSearchResultDTO> codeSnippets) {
+        try {
+            // 清理AI响应中的markdown格式
+            String cleanedResponse = cleanJsonResponse(aiResponse);
+            logger.debug("清理后的AI响应: {}", cleanedResponse);
+            
+            // 解析JSON响应
+            ObjectMapper mapper = new ObjectMapper();
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> responseMap = mapper.readValue(cleanedResponse, java.util.Map.class);
+            
+            // 1. 解析优化后的聚类概念名称（但保护默认聚类组）
+            String originalConceptName = cluster.getClusterConcept();
+            String optimizedConceptName = (String) responseMap.get("optimizedConceptName");
+            
+            // 如果是默认聚类组"核心定义"，不允许AI修改名称
+            if (!"核心定义".equals(originalConceptName) && 
+                optimizedConceptName != null && !optimizedConceptName.trim().isEmpty()) {
+                cluster.setClusterConcept(optimizedConceptName.trim());
+                logger.debug("成功解析优化聚类概念: {} -> {}", 
+                    originalConceptName, optimizedConceptName.trim());
+            } else {
+                logger.debug("保护默认聚类组名称或优化概念为空，跳过概念优化: {}", originalConceptName);
+            }
+            
+            // 2. 解析每个代码片段的解释并设置到对应的codeSnippets对象
+            @SuppressWarnings("unchecked")
+            java.util.List<String> snippetExplanations = (java.util.List<String>) responseMap.get("snippetExplanations");
+            
+            if (snippetExplanations != null) {
+                // 将解释分别设置到对应的代码片段对象中
+                int actualCount = Math.min(snippetExplanations.size(), codeSnippets.size());
+                for (int i = 0; i < actualCount; i++) {
+                    if (i < codeSnippets.size() && i < snippetExplanations.size()) {
+                        String explanation = snippetExplanations.get(i);
+                        if (explanation != null && !explanation.trim().isEmpty()) {
+                            codeSnippets.get(i).setExplanation(explanation.trim());
+                        } else {
+                            codeSnippets.get(i).setExplanation(generateFallbackSnippetExplanation(i + 1));
+                        }
+                    }
+                }
+                logger.debug("成功解析{}个代码片段解释", actualCount);
+                         } else {
+                 logger.warn("JSON响应中未找到snippetExplanations字段");
+                 // 为代码片段设置后备解释
+                 for (int i = 0; i < Math.min(codeSnippets.size(), 3); i++) {
+                     codeSnippets.get(i).setExplanation(generateFallbackSnippetExplanation(i + 1));
+                 }
+             }
+            
+            // 3. 解析整体汇总说明
+            String overallSummary = (String) responseMap.get("overallSummary");
+            if (overallSummary != null && !overallSummary.trim().isEmpty()) {
+                cluster.setClusterSummary(overallSummary.trim());
+                logger.debug("成功解析整体汇总，长度: {}", overallSummary.trim().length());
+            } else {
+                cluster.setClusterSummary(generateFallbackSummary(cluster, originalConcept));
+                logger.debug("整体汇总为空，使用后备汇总");
+            }
+            
+            logger.info("JSON解析成功完成：概念优化={}, 代码片段解释数={}, 整体汇总长度={}", 
+                !optimizedConceptName.equals(originalConceptName), 
+                snippetExplanations != null ? snippetExplanations.size() : 0, 
+                overallSummary != null ? overallSummary.length() : 0);
+            
+        } catch (Exception e) {
+            logger.warn("JSON解析AI分析响应失败: {}", e.getMessage());
+            logger.debug("原始AI响应: {}", aiResponse);
+            // 使用后备方案
+            setFallbackExplanations(cluster, originalConcept, codeSnippets);
+        }
+    }
+    
+
+    
+
+    
+
+    
+    /**
+     * 生成后备的代码片段解释
+     * @param snippetIndex 片段索引（1-based）
+     * @return 后备解释文本
+     */
+    private String generateFallbackSnippetExplanation(int snippetIndex) {
+        return String.format("代码片段%d包含相关的Linux内核实现，具体功能需要进一步分析。", snippetIndex);
+    }
+    
+
+    
+    /**
+     * 设置后备解释（当AI解析完全失败时）
+     */
+    private void setFallbackExplanations(CodeClusterResultDTO.ConceptCluster cluster, 
+                                        String originalConcept, List<CodeSearchResultDTO> codeSnippets) {
+        // 1. 为聚类概念设置后备优化名称（保持原有名称，不进行优化）
+        logger.debug("AI解析失败，保持原始聚类概念名称: {}", cluster.getClusterConcept());
+        
+        // 2. 为每个代码片段设置后备解释到其explanation字段
+        int snippetCount = Math.min(codeSnippets.size(), 3);
+        
+        for (int i = 0; i < snippetCount; i++) {
+            if (i < codeSnippets.size()) {
+                CodeSearchResultDTO snippet = codeSnippets.get(i);
+                String fallbackExplanation = String.format(
+                    "该代码片段位于 %s 第%d-%d行，包含%s相关的实现。",
+                    snippet.getFilePath(), snippet.getStartLine(), snippet.getEndLine(), snippet.getType()
+                );
+                snippet.setExplanation(fallbackExplanation);
+            }
+        }
+        
+        // 3. 设置后备的聚类总结
+        cluster.setClusterSummary(generateFallbackSummary(cluster, originalConcept));
+    }
+
+    
+    /**
+     * 生成后备汇总说明
+     */
+    private String generateFallbackSummary(CodeClusterResultDTO.ConceptCluster cluster, String originalConcept) {
+        return String.format("与'%s'相关的'%s'功能实现，包含%d行代码", 
+            originalConcept, cluster.getClusterConcept(), cluster.getCodeLines().size());
     }
     
     /**
@@ -1670,7 +2613,8 @@ public class EntityLinkServiceImpl implements EntityLinkService {
     private String generateClusterAnalysisSummary(String concept, int totalLines, int clusterCount) {
         return String.format(
             "基于概念'%s'的代码聚类分析完成。共分析了%d行代码，识别出%d个概念聚类。" +
-            "通过词袋模型分析，提取了代码中的关键标识符并按照概念相似性进行了分组。",
+            "通过词袋模型分析，提取了代码中的关键标识符并按照概念相似性进行了分组，" +
+            "并为每个聚类获取了完整代码片段和AI解释。",
             concept, totalLines, clusterCount
         );
     }

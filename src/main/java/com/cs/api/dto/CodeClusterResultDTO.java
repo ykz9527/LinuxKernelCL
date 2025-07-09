@@ -1,6 +1,7 @@
 package com.cs.api.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -43,24 +44,28 @@ public class CodeClusterResultDTO {
         @Schema(description = "概念频次", example = "8")
         private Integer conceptFrequency;
 
-        @Schema(description = "聚类置信度", example = "0.85")
-        private Double confidence;
-
         @Schema(description = "关联的代码行")
         private List<CodeLineInfo> codeLines;
 
         @Schema(description = "核心词汇", example = "['fair', 'sched', 'task', 'queue']")
         private List<String> coreTokens;
 
+        @Schema(description = "完整代码片段列表（每个片段的explanation字段包含针对该片段的AI解释）")
+        private List<CodeSearchResultDTO> codeSnippets;
+
+        @Schema(description = "聚类特征总结（10-30字的一句话）")
+        private String clusterSummary;
+
         public ConceptCluster() {}
 
-        public ConceptCluster(String clusterConcept, Integer conceptFrequency, Double confidence, 
+        public ConceptCluster(String clusterConcept, Integer conceptFrequency, 
                              List<CodeLineInfo> codeLines, List<String> coreTokens) {
             this.clusterConcept = clusterConcept;
             this.conceptFrequency = conceptFrequency;
-            this.confidence = confidence;
             this.codeLines = codeLines;
             this.coreTokens = coreTokens;
+            this.codeSnippets = new ArrayList<>();
+            this.clusterSummary = "";
         }
 
         // Getters and Setters
@@ -80,14 +85,6 @@ public class CodeClusterResultDTO {
             this.conceptFrequency = conceptFrequency;
         }
 
-        public Double getConfidence() {
-            return confidence;
-        }
-
-        public void setConfidence(Double confidence) {
-            this.confidence = confidence;
-        }
-
         public List<CodeLineInfo> getCodeLines() {
             return codeLines;
         }
@@ -102,6 +99,22 @@ public class CodeClusterResultDTO {
 
         public void setCoreTokens(List<String> coreTokens) {
             this.coreTokens = coreTokens;
+        }
+
+        public List<CodeSearchResultDTO> getCodeSnippets() {
+            return codeSnippets;
+        }
+
+        public void setCodeSnippets(List<CodeSearchResultDTO> codeSnippets) {
+            this.codeSnippets = codeSnippets;
+        }
+
+        public String getClusterSummary() {
+            return clusterSummary;
+        }
+
+        public void setClusterSummary(String clusterSummary) {
+            this.clusterSummary = clusterSummary;
         }
     }
 
@@ -122,19 +135,28 @@ public class CodeClusterResultDTO {
 
         @Schema(description = "识别出的标识符", example = "['sched_entity', 'se', 'p']")
         private List<String> identifiers;
-
-        @Schema(description = "与核心概念的相似度", example = "0.72")
-        private Double similarity;
+        
+        @Schema(description = "代码行来源类型", example = "definitions")
+        private String sourceType;
 
         public CodeLineInfo() {}
 
         public CodeLineInfo(String filePath, Integer lineNumber, String codeContent, 
-                           List<String> identifiers, Double similarity) {
+                           List<String> identifiers) {
             this.filePath = filePath;
             this.lineNumber = lineNumber;
             this.codeContent = codeContent;
             this.identifiers = identifiers;
-            this.similarity = similarity;
+            this.sourceType = "unknown"; // 默认值
+        }
+        
+        public CodeLineInfo(String filePath, Integer lineNumber, String codeContent, 
+                           List<String> identifiers, String sourceType) {
+            this.filePath = filePath;
+            this.lineNumber = lineNumber;
+            this.codeContent = codeContent;
+            this.identifiers = identifiers;
+            this.sourceType = sourceType;
         }
 
         // Getters and Setters
@@ -169,14 +191,15 @@ public class CodeClusterResultDTO {
         public void setIdentifiers(List<String> identifiers) {
             this.identifiers = identifiers;
         }
-
-        public Double getSimilarity() {
-            return similarity;
+        
+        public String getSourceType() {
+            return sourceType;
         }
 
-        public void setSimilarity(Double similarity) {
-            this.similarity = similarity;
+        public void setSourceType(String sourceType) {
+            this.sourceType = sourceType;
         }
+
     }
 
     public CodeClusterResultDTO() {}
