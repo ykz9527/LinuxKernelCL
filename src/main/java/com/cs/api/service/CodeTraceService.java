@@ -1,6 +1,7 @@
 package com.cs.api.service;
 
 import com.cs.api.dto.CodeTraceResponseDTO;
+import java.util.List;
 
 
 /**
@@ -21,6 +22,6 @@ public interface CodeTraceService {
      * @param targetCommit 当前的commitId，用于追溯到上一次提交涉及的commitId
      * @return 代码追溯响应结果
      */
-    CodeTraceResponseDTO traceMethodHistory(String filePath, String methodName, String version, String targetCommit);
+    List<CodeTraceResponseDTO> traceMethodHistory(String filePath, String methodName, String version, String targetCommit);
 
 }

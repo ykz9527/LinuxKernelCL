@@ -15,6 +15,8 @@ import com.cs.api.dto.CodeTraceRequestDTO;
 import com.cs.api.dto.CodeTraceResponseDTO;
 import com.cs.api.service.CodeTraceService;
 
+import java.util.List;
+
 /**
  * Linux内核代码追溯控制器
  * 提供函数和结构体的演化历史追溯功能
@@ -47,32 +49,39 @@ public class CodeTraceController {
         @ApiResponse(responseCode = "404", description = "指定版本不存在"),
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
-    public Result<CodeTraceResponseDTO> traceMethodHistory(
+    public Result<List<CodeTraceResponseDTO>> traceMethodHistory(
             @Valid @RequestBody CodeTraceRequestDTO traceRequest) {
         logger.info("接收代码追溯请求: {}", traceRequest);
         
         try {  
             // 执行代码追溯
-            CodeTraceResponseDTO traceResult = codeTraceService.traceMethodHistory(
+            List<CodeTraceResponseDTO> traceResults = codeTraceService.traceMethodHistory(
                 traceRequest.getFilePath(), 
                 traceRequest.getMethodName(), 
                 traceRequest.getVersion(),
                 traceRequest.getTargetCommit()
             );
             
-            if (!traceResult.isSuccess()) {
-                logger.warn("代码追溯失败: {}", traceResult.getErrorMessage());
-                return Result.error(400, traceResult.getErrorMessage());
-            }
-            
-            if (traceResult.getCommitHistory() == null) {
+            if (traceResults.isEmpty()) {
                 logger.info("未找到匹配的commit历史: methodName={}, filePath={}, version={}", 
                     traceRequest.getMethodName(), traceRequest.getFilePath(), traceRequest.getVersion());
-                return Result.success("未找到该方法的演化历史", traceResult);
+                return Result.success("未找到该方法的演化历史", traceResults);
             }
             
-            logger.info("代码追溯成功，找到commit历史:{}", traceResult.getCommitHistory());
-            return Result.success(traceResult);
+            // 检查是否有任何失败的结果
+            boolean hasFailures = traceResults.stream().anyMatch(result -> !result.isSuccess());
+            if (hasFailures) {
+                String errorMessages = traceResults.stream()
+                    .filter(result -> !result.isSuccess())
+                    .map(CodeTraceResponseDTO::getErrorMessage)
+                    .findFirst()
+                    .orElse("代码追溯部分失败");
+                logger.warn("代码追溯部分失败: {}", errorMessages);
+                return Result.error(400, errorMessages);
+            }
+            
+            logger.info("代码追溯成功，找到{}条commit历史", traceResults.size());
+            return Result.success(traceResults);
             
         } catch (IllegalArgumentException e) {
             logger.error("请求参数错误: {}", e.getMessage());
@@ -108,4 +117,4 @@ public class CodeTraceController {
             return Result.error(503, "代码追溯服务不可用: " + e.getMessage());
         }
     }
-} 
+}

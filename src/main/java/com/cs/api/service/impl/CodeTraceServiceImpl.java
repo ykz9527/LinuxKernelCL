@@ -74,69 +74,80 @@ public class CodeTraceServiceImpl implements CodeTraceService {
     }
 
     @Override
-    public CodeTraceResponseDTO traceMethodHistory(String filePath, String methodName, String version, String targetCommit) {
+    public List<CodeTraceResponseDTO> traceMethodHistory(String filePath, String methodName, String version, String targetCommit) {
         logger.info("开始追溯方法历史: methodName={}, filePath={}, version={}, targetCommit={}", methodName, filePath, version, targetCommit);
         
-        try {
+        List<CodeTraceResponseDTO> responseList = new ArrayList<>();
 
+        try {
             // 验证输入参数
             if (methodName == null || methodName.trim().isEmpty()) {
                 logger.warn("方法名不能为空");
-                return new CodeTraceResponseDTO("方法名不能为空");
+                return responseList;
             }
 
             if (filePath == null || filePath.isEmpty()) {
                 logger.warn("文件路径列表不能为空");
-                return new CodeTraceResponseDTO("文件路径列表不能为空");
+                return responseList;
             }
 
             // 调用外部API获取commit历史信息
-            CodeTraceResultDTO commitHistory = fetchCommitHistory(methodName, filePath, version, targetCommit);
+            List<CodeTraceResultDTO> commitHistoryList = fetchCommitHistory(methodName, filePath, version, targetCommit);
+
+            for (CodeTraceResultDTO commitHistory : commitHistoryList){
             
-            // 创建响应对象并设置基本信息
-            CodeTraceResponseDTO response = new CodeTraceResponseDTO(commitHistory);
-            response.setFilePath(filePath);
+                // 创建响应对象并设置基本信息
+                CodeTraceResponseDTO response = new CodeTraceResponseDTO(commitHistory);
+                response.setFilePath(filePath);
             
-            // 使用KernelCodeAnalyzer获取代码片段和行号信息
-            try {
-                // 优先使用commitHistory中的版本信息，如果没有则使用输入的version
-                String codeVersion = (commitHistory != null && commitHistory.getVersion() != null) 
+                // 使用KernelCodeAnalyzer获取代码片段和行号信息
+                try {
+                    // 优先使用commitHistory中的版本信息，如果没有则使用输入的version
+                    String codeVersion = (commitHistory != null && commitHistory.getVersion() != null) 
                     ? commitHistory.getVersion() : version;
                     
-                logger.debug("开始使用KernelCodeAnalyzer获取代码信息: filePath={}, methodName={}, version={}", 
-                    filePath, methodName, codeVersion);
+                    logger.debug("开始使用KernelCodeAnalyzer获取代码信息: filePath={}, methodName={}, version={}", 
+                        filePath, methodName, codeVersion);
                 
-                // 使用增强的代码搜索方法
-                CodeSearchResultDTO codeResult = enhancedCodeSearch(filePath, methodName, codeVersion);
+                    // 使用增强的代码搜索方法
+                    CodeSearchResultDTO codeResult = enhancedCodeSearch(filePath, methodName, codeVersion);
                 
-                if (codeResult != null) {
-                    // 将代码分析结果添加到响应中
-                    response.setCodeSnippet(codeResult.getCodeSnippet());
-                    response.setStartLine(codeResult.getStartLine());
-                    response.setEndLine(codeResult.getEndLine());
-                    response.setExplanation(codeResult.getExplanation());
+                    if (codeResult != null) {
+                        // 将代码分析结果添加到响应中
+                        response.setCodeSnippet(codeResult.getCodeSnippet());
+                        response.setStartLine(codeResult.getStartLine());
+                        response.setEndLine(codeResult.getEndLine());
+                        response.setExplanation(codeResult.getExplanation());
                     
-                    logger.info("✅ 成功获取代码片段: startLine={}, endLine={}, snippetLength={}", 
-                        codeResult.getStartLine(), codeResult.getEndLine(), 
-                        codeResult.getCodeSnippet() != null ? codeResult.getCodeSnippet().length() : 0);
-                } else {
-                    logger.warn("所有搜索策略均未找到代码元素: methodName={}, filePath={}", methodName, filePath);
-                    response.setExplanation(String.format("在文件 %s (版本: %s) 中未找到方法 %s 的代码定义。" +
-                        "这可能是因为方法名格式不匹配、文件不存在或版本差异导致的。", filePath, codeVersion, methodName));
+                        logger.info("✅ 成功获取代码片段: startLine={}, endLine={}, snippetLength={}", 
+                            codeResult.getStartLine(), codeResult.getEndLine(), 
+                            codeResult.getCodeSnippet() != null ? codeResult.getCodeSnippet().length() : 0);
+                    } else {
+                        logger.warn("所有搜索策略均未找到代码元素: methodName={}, filePath={}", methodName, filePath);
+                        response.setExplanation(String.format("在文件 %s (版本: %s) 中未找到方法 %s 的代码定义。" +
+                            "这可能是因为方法名格式不匹配、文件不存在或版本差异导致的。", filePath, codeVersion, methodName));
+                    }
+                    
+                } catch (Exception codeAnalysisException) {
+                    logger.warn("代码分析过程中发生异常: {}", codeAnalysisException.getMessage());
+                    response.setExplanation("代码分析过程中发生异常: " + codeAnalysisException.getMessage());
                 }
-                
-            } catch (Exception codeAnalysisException) {
-                logger.warn("代码分析过程中发生异常: {}", codeAnalysisException.getMessage());
-                response.setExplanation("代码分析过程中发生异常: " + codeAnalysisException.getMessage());
+
+                responseList.add(response);
             }
             
-            logger.info("方法历史追溯完成: methodName={}, 找到commit:{}", methodName, commitHistory);
             
-            return response;
+            logger.info("方法历史追溯完成: methodName={}, 找到 {} 条 commit", methodName, responseList.size());
+
+            logger.debug("Full Response:{}", responseList);
+            
+            return responseList;
 
         } catch (Exception e) {
-            logger.error("追溯方法历史时发生异常: methodName=" + methodName, e);
-            return new CodeTraceResponseDTO("追溯过程中发生错误: " + e.getMessage());
+            logger.error("追溯方法历史失败", e);
+            CodeTraceResponseDTO errorResponse = new CodeTraceResponseDTO("追溯方法历史失败: " + e.getMessage());
+            responseList.add(errorResponse);
+            return responseList;
         }
     }
     
@@ -148,7 +159,7 @@ public class CodeTraceServiceImpl implements CodeTraceService {
      * @param version 版本号
      * @return commit历史记录列表
      */
-    private CodeTraceResultDTO fetchCommitHistory(String methodName, String filePaths, String version, String targetCommit) {
+    private List<CodeTraceResultDTO> fetchCommitHistory(String methodName, String filePaths, String version, String targetCommit) {
         logger.debug("开始获取commit历史: methodName={}, filePaths={}, version={}, targetCommit={}", methodName, filePaths, version, targetCommit);
         
         // 在现有的 logger.debug 语句后添加 version 预处理逻辑
@@ -158,7 +169,8 @@ public class CodeTraceServiceImpl implements CodeTraceService {
             logger.debug("移除版本号前缀'v': 处理后的版本号为 {}", version);
         }
         
-        CodeTraceResultDTO result = new CodeTraceResultDTO();
+        // CodeTraceResultDTO result = new CodeTraceResultDTO();
+        List<CodeTraceResultDTO> result = new ArrayList<CodeTraceResultDTO>();
         
         try {
             
@@ -190,7 +202,7 @@ public class CodeTraceServiceImpl implements CodeTraceService {
             // 转换数据格式
             result = convertToCodeTraceResult(apiResponse);
             
-            logger.info("✅ 成功获取到commit历史记录:{}", result);
+            logger.info("✅ 成功获取到 {} 条commit历史记录", result.size());
             
         } catch (Exception e) {
             logger.error("获取commit历史时发生异常: methodName={}, filePaths={}, version={}", 
@@ -212,7 +224,8 @@ public class CodeTraceServiceImpl implements CodeTraceService {
                 .queryParam("filePaths", filePath)
                 .queryParam("methodName", methodName)
                 .queryParam("version", version)
-                .queryParam("targetCommit", targetCommit);
+                .queryParam("targetCommit", targetCommit)
+                .queryParam("trackNum", 0);
             
             return builder.build().encode().toUriString();
             
@@ -277,12 +290,13 @@ public class CodeTraceServiceImpl implements CodeTraceService {
     /**
      * 将tracker API响应数据转换为CodeTraceResultDTO列表
      */
-    private CodeTraceResultDTO convertToCodeTraceResult(TrackerApiResponseDTO apiResponse) {
-        CodeTraceResultDTO result = new CodeTraceResultDTO();
+    private List<CodeTraceResultDTO> convertToCodeTraceResult(TrackerApiResponseDTO apiResponse) {
+        
+        List<CodeTraceResultDTO> resultList = new ArrayList<>();
         
         if (apiResponse.getData() == null || apiResponse.getData().isEmpty()) {
             logger.debug("tracker API响应中没有数据");
-            return result;
+            return resultList;
         }
         
         try {
@@ -292,21 +306,22 @@ public class CodeTraceServiceImpl implements CodeTraceService {
                 List<TrackerApiResponseDTO.TrackerCommitInfoDTO> commitInfos = entry.getValue();
                 
                 logger.debug("处理方法签名: {}, commit数量: {}", methodSignature, commitInfos.size());
-                
+
                 // 转换每个commit信息
                 for (TrackerApiResponseDTO.TrackerCommitInfoDTO commitInfo : commitInfos) {
-                    result = convertToCodeTraceResult(commitInfo);
-                    return result;
+                    CodeTraceResultDTO result = convertToCodeTraceResult(commitInfo);
+                    resultList.add(result);
+
                 }
             }
             
-            logger.debug("成功转换commit记录:{}", result);
+            logger.debug("成功转换 {} 条commit记录", resultList.size());
             
         } catch (Exception e) {
             logger.error("转换tracker API响应数据失败", e);
         }
         
-        return result;
+        return resultList;
     }
 
     /**
