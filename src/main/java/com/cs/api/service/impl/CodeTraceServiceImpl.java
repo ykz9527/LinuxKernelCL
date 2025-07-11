@@ -1,5 +1,7 @@
 package com.cs.api.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.cs.api.dto.CodeTraceResponseDTO;
 import com.cs.api.dto.CodeTraceResultDTO;
 import com.cs.api.dto.TrackerApiResponseDTO;
@@ -448,10 +450,10 @@ public class CodeTraceServiceImpl implements CodeTraceService {
     /**
      * 使用大模型分析 CodeTrace 的 Pipeline
      */
-    private String analysisCodeTraceByLLM(List<CodeTraceResponseDTO> codeTraceHistroy){
+    private String analysisCodeTraceByLLM(List<CodeTraceResponseDTO> codeTraceHistroy, String codeElementName){
         List<CodeTraceResponseDTO> keyCodeTraceHistory = codeEvolutionAnalyzer.filterKeyCommits(codeTraceHistroy);
         
-
+        return "";
 
 
     }
