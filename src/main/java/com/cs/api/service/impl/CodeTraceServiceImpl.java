@@ -6,6 +6,7 @@ import com.cs.api.dto.TrackerApiResponseDTO;
 import com.cs.api.dto.CodeSearchResultDTO;
 import com.cs.api.service.CodeTraceService;
 import com.cs.api.service.analyzer.KernelCodeAnalyzer;
+import com.cs.api.service.analyzer.CodeEvolutionAnalyzer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +67,9 @@ public class CodeTraceServiceImpl implements CodeTraceService {
      * JSON解析器，用于解析API响应
      */
     private final ObjectMapper objectMapper;
+
+    @Autowired
+    private CodeEvolutionAnalyzer codeEvolutionAnalyzer;
 
     public CodeTraceServiceImpl() {
         this.restTemplate = new RestTemplate();
@@ -136,7 +140,7 @@ public class CodeTraceServiceImpl implements CodeTraceService {
                 responseList.add(response);
             }
             
-            
+
             logger.info("方法历史追溯完成: methodName={}, 找到 {} 条 commit", methodName, responseList.size());
 
             logger.debug("Full Response:{}", responseList);
@@ -440,4 +444,16 @@ public class CodeTraceServiceImpl implements CodeTraceService {
         
         return result;
     }
+
+    /**
+     * 使用大模型分析 CodeTrace 的 Pipeline
+     */
+    private String analysisCodeTraceByLLM(List<CodeTraceResponseDTO> codeTraceHistroy){
+        List<CodeTraceResponseDTO> keyCodeTraceHistory = codeEvolutionAnalyzer.filterKeyCommits(codeTraceHistroy);
+        
+
+
+
+    }
+
 } 

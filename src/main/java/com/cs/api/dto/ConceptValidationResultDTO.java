@@ -11,6 +11,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 public class ConceptValidationResultDTO {
 
+    @Schema(description = "概念ID")
+    private Long id;
+
     @Schema(description = "验证的概念")
     private String concept;
 
@@ -32,9 +35,10 @@ public class ConceptValidationResultDTO {
     // 构造函数
     public ConceptValidationResultDTO() {}
 
-    public ConceptValidationResultDTO(String concept, boolean exists, int matchCount, 
+    public ConceptValidationResultDTO(Long id, String concept, boolean exists, int matchCount, 
                                      String bestMatchConcept, String bestMatchDefinition, 
                                      String details) {
+        this.id = id;
         this.concept = concept;
         this.exists = exists;
         this.matchCount = matchCount;
@@ -44,6 +48,14 @@ public class ConceptValidationResultDTO {
     }
 
     // Getters and Setters
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
 
     public String getConcept() {
         return concept;
@@ -96,6 +108,7 @@ public class ConceptValidationResultDTO {
     @Override
     public String toString() {
         return "ConceptValidationResultDTO{" +
+                "id=" + id +
                 "concept='" + concept + '\'' +
                 ", exists=" + exists +
                 ", matchCount=" + matchCount +

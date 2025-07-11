@@ -1335,6 +1335,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         if (matches.isEmpty()) {
             // 没有找到匹配的概念
             return new ConceptValidationResultDTO(
+                null,
                 concept, 
                 false, 
                 0, 
@@ -1350,6 +1351,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             String details = isExactMatch ? "在概念数据库中找到精确匹配的概念" : "在概念数据库中找到相似的概念";
                 
             return new ConceptValidationResultDTO(
+                match.getEid(),
                 concept,
                 true,
                 1,
@@ -1457,6 +1459,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                     matches.size(), bestMatchIndex, reasoning);
                 
                 return new ConceptValidationResultDTO(
+                    bestMatch.getEid(),
                     concept,
                     true,
                     matches.size(),
@@ -1516,6 +1519,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             matches.size());
         
         return new ConceptValidationResultDTO(
+            bestMatch.getEid(),
             concept,
             true,
             matches.size(),
