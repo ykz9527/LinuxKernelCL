@@ -336,16 +336,16 @@ public class CodeTraceServiceImpl implements CodeTraceService {
      * 
      * @param filePath 文件路径
      * @param methodName 方法名
-     * @param version 版本
+     * @param commitId 提交ID
      * @return CodeSearchResultDTO 代码搜索结果
      */
-    private CodeSearchResultDTO enhancedCodeSearch(String filePath, String methodName, String version) {
-        logger.debug("开始增强代码搜索: filePath={}, methodName={}, version={}", filePath, methodName, version);
+    private CodeSearchResultDTO enhancedCodeSearch(String filePath, String methodName, String commitId) {
+        logger.debug("开始增强代码搜索: filePath={}, methodName={}, commitId={}", filePath, methodName, commitId);
         
         try {
             // 1. 首先尝试通过完整方法名搜索
             CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByIdentifier(
-                filePath, methodName, "function", kernelSourcePath, version);
+                filePath, methodName, "function", kernelSourcePath, commitId);
             
             if (result != null) {
                 logger.debug("通过完整方法名找到代码元素");
@@ -357,7 +357,7 @@ public class CodeTraceServiceImpl implements CodeTraceService {
             if (!simplifiedMethodName.equals(methodName)) {
                 logger.debug("尝试使用简化方法名搜索: {}", simplifiedMethodName);
                 result = KernelCodeAnalyzer.findCodeElementByIdentifier(
-                    filePath, simplifiedMethodName, "function", kernelSourcePath, version);
+                    filePath, simplifiedMethodName, "function", kernelSourcePath, commitId);
                     
                 if (result != null) {
                     logger.debug("通过简化方法名找到代码元素");
@@ -368,7 +368,7 @@ public class CodeTraceServiceImpl implements CodeTraceService {
             // 3. 尝试搜索结构体或其他类型的代码元素
             logger.debug("尝试搜索结构体类型");
             result = KernelCodeAnalyzer.findCodeElementByIdentifier(
-                filePath, simplifiedMethodName, "struct", kernelSourcePath, version);
+                filePath, simplifiedMethodName, "struct", kernelSourcePath, commitId);
                 
             if (result != null) {
                 logger.debug("找到结构体定义");

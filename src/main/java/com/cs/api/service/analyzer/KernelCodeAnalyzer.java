@@ -39,17 +39,17 @@ public class KernelCodeAnalyzer {
      * @param filePath 文件路径（相对于内核源码根目录）
      * @param lineNumber 目标行号
      * @param kernelSourcePath 内核源码根路径
-     * @param version Git版本（commit ID, branch, or tag）
+     * @param commitId Git提交ID
      * @return CodeSearchResultDTO 包含完整代码定义的结果，如果未找到返回null
      */
-    public static CodeSearchResultDTO findCodeElementByLineNumber(String filePath, String concept, int lineNumber, String kernelSourcePath, String version) {
-        logger.debug("使用Eclipse CDT查找代码元素: file={}, line={}, version={}", filePath, lineNumber, version);
+    public static CodeSearchResultDTO findCodeElementByLineNumber(String filePath, String concept, int lineNumber, String kernelSourcePath, String commitId) {
+        logger.debug("使用Eclipse CDT查找代码元素: file={}, line={}, commitId={}", filePath, lineNumber, commitId);
         
         try {
             // 从Git仓库获取文件内容
-            byte[] fileContentBytes = getFileContentFromGit(kernelSourcePath, filePath, version);
+            byte[] fileContentBytes = getFileContentFromGit(kernelSourcePath, filePath, commitId);
             if (fileContentBytes == null) {
-                logger.debug("文件 {} 在版本 {} 中不存在", filePath, version);
+                logger.debug("文件 {} 在提交 {} 中不存在", filePath, commitId);
                 return null;
             }
             
@@ -68,7 +68,7 @@ public class KernelCodeAnalyzer {
             }
             // 提取完整的代码块
             String fileContent = new String(fileContentBytes);
-            return extractCodeBlock(concept, element, filePath, fileContent, version);
+            return extractCodeBlock(concept, element, filePath, fileContent, commitId);
             
         } catch (Exception e) {
             logger.warn("使用CDT查找代码元素失败: file={}, line={}, error={}", filePath, lineNumber, e.getMessage());
@@ -82,17 +82,17 @@ public class KernelCodeAnalyzer {
      * @param filePath 文件路径（相对于内核源码根目录）
      * @param concept 代码标识符（函数名、结构体名等）
      * @param kernelSourcePath 内核源码根路径
-     * @param version Git版本（commit ID, branch, or tag）
+     * @param commitId Git提交ID
      * @return CodeSearchResultDTO 包含完整代码定义的结果，如果未找到返回null
      */
-    public static CodeSearchResultDTO findCodeElementByIdentifier(String filePath, String concept, String type, String kernelSourcePath, String version) {
-        logger.debug("使用Eclipse CDT查找代码标识符: file={}, identifier={}, version={}", filePath, concept, version);
+    public static CodeSearchResultDTO findCodeElementByIdentifier(String filePath, String concept, String type, String kernelSourcePath, String commitId) {
+        logger.debug("使用Eclipse CDT查找代码标识符: file={}, identifier={}, commitId={}", filePath, concept, commitId);
         
         try {
             // 从Git仓库获取文件内容
-            byte[] fileContentBytes = getFileContentFromGit(kernelSourcePath, filePath, version);
+            byte[] fileContentBytes = getFileContentFromGit(kernelSourcePath, filePath, commitId);
             if (fileContentBytes == null) {
-                logger.debug("文件 {} 在版本 {} 中不存在", filePath, version);
+                logger.debug("文件 {} 在提交 {} 中不存在", filePath, commitId);
                 return null;
             }
             
@@ -112,7 +112,7 @@ public class KernelCodeAnalyzer {
             
             // 提取完整的代码块
             String fileContent = new String(fileContentBytes);
-            return extractCodeBlock(concept, element, filePath, fileContent, version);
+            return extractCodeBlock(concept, element, filePath, fileContent, commitId);
             
         } catch (Exception e) {
             logger.warn("使用CDT查找代码标识符失败: file={}, identifier={}, error={}", filePath, concept, e.getMessage());
@@ -121,22 +121,22 @@ public class KernelCodeAnalyzer {
     }
 
     /**
-     * 使用JGit从Git仓库获取指定版本的文件内容
+     * 使用JGit从Git仓库获取指定提交的文件内容
      *
      * @param repoPath Git仓库路径
      * @param filePath 文件路径
-     * @param version Git版本（commit ID, branch, or tag）
+     * @param commitId Git提交ID
      * @return 文件内容的字节数组，如果未找到则返回null
      * @throws IOException
      */
-    private static byte[] getFileContentFromGit(String repoPath, String filePath, String version) throws IOException {
+    private static byte[] getFileContentFromGit(String repoPath, String filePath, String commitId) throws IOException {
         File repoDir = new File(repoPath);
         if (!repoDir.isDirectory()) {
             logger.warn("Git仓库路径不存在或不是一个目录: {}", repoPath);
             return null;
         }
 
-        ProcessBuilder pb = new ProcessBuilder("git", "show", version + ":" + filePath);
+        ProcessBuilder pb = new ProcessBuilder("git", "show", commitId + ":" + filePath);
         pb.directory(repoDir);
         Process process = pb.start();
 
@@ -160,18 +160,18 @@ public class KernelCodeAnalyzer {
 
         if (!finished) {
             process.destroyForcibly();
-            throw new IOException("`git show` command timed out after 30 seconds for " + version + ":" + filePath);
+            throw new IOException("`git show` command timed out after 30 seconds for " + commitId + ":" + filePath);
         }
 
         if (process.exitValue() != 0) {
             String errorOutput = errorStream.toString();
             // Log non-fatal errors (like file not found) at a lower level
             if (errorOutput.contains("does not exist in") || errorOutput.contains("exists on disk, but not in")) {
-                logger.debug("File not found in git: {}:{}", version, filePath);
+                logger.debug("File not found in git: {}:{}", commitId, filePath);
                 return null;
             }
             // Log other errors as warnings
-            logger.warn("`git show` command failed for '{}:{}' with exit code {}. Stderr: {}", version, filePath, process.exitValue(), errorOutput);
+            logger.warn("`git show` command failed for '{}:{}' with exit code {}. Stderr: {}", commitId, filePath, process.exitValue(), errorOutput);
             throw new IOException("Git command exited with code " + process.exitValue() + ": " + errorOutput);
         }
         
@@ -250,10 +250,10 @@ public class KernelCodeAnalyzer {
      * @param element 代码元素
      * @param filePath 文件路径
      * @param fileContent 文件内容
-     * @param version Git版本
+     * @param commitId Git提交ID
      * @return CodeSearchResultDTO 代码搜索结果
      */
-    private static CodeSearchResultDTO extractCodeBlock(String concept, CodeElement element, String filePath, String fileContent, String version) throws IOException {
+    private static CodeSearchResultDTO extractCodeBlock(String concept, CodeElement element, String filePath, String fileContent, String commitId) throws IOException {
         List<String> fileLines = Arrays.asList(fileContent.split("\\R"));
         
         // 计算实际的行号范围（CDT行号从1开始）
@@ -286,7 +286,7 @@ public class KernelCodeAnalyzer {
             startLine,
             endLine,
             explanation,
-            version,
+            commitId,
             element.type
         );
     }
@@ -448,16 +448,16 @@ public class KernelCodeAnalyzer {
      * @param concept  相关概念
      * @param lineNumber 目标行号
      * @param kernelSourcePath 内核源码根路径
-     * @param version Git版本
+     * @param commitId Git提交ID
      * @return CodeSearchResultDTO 包含完整注释和上下文信息，如果未找到则返回null
      */
-    public static CodeSearchResultDTO findCommentBlockByLineNumber(String filePath, String concept, int lineNumber, String kernelSourcePath, String version) {
-        logger.debug("使用Eclipse CDT查找注释块: file={}, line={}, version={}", filePath, lineNumber, version);
+    public static CodeSearchResultDTO findCommentBlockByLineNumber(String filePath, String concept, int lineNumber, String kernelSourcePath, String commitId) {
+        logger.debug("使用Eclipse CDT查找注释块: file={}, line={}, commitId={}", filePath, lineNumber, commitId);
 
         try {
-            byte[] fileContentBytes = getFileContentFromGit(kernelSourcePath, filePath, version);
+            byte[] fileContentBytes = getFileContentFromGit(kernelSourcePath, filePath, commitId);
             if (fileContentBytes == null) {
-                logger.debug("文件 {} 在版本 {} 中不存在", filePath, version);
+                logger.debug("文件 {} 在提交 {} 中不存在", filePath, commitId);
                 return null;
             }
 
@@ -520,7 +520,7 @@ public class KernelCodeAnalyzer {
                 startLine,
                 endLine,
                 explanation,
-                version,
+                commitId,
                 elementType
             );
 

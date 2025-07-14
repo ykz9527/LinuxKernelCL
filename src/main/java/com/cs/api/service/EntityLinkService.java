@@ -8,6 +8,7 @@ import com.cs.api.dto.ConceptExplanationResultDTO;
 import com.cs.api.dto.ConceptRelationshipResultDTO;
 import com.cs.api.dto.ConceptValidationResultDTO;
 import com.cs.api.dto.TripleSearchResultDTO;
+import com.cs.api.dto.EntityExtractionDTO;
 
 /**
  * Linux内核代码搜索服务接口
@@ -77,5 +78,13 @@ public interface EntityLinkService {
      * @return 概念验证结果
      */
     ConceptValidationResultDTO validateConcept(String concept, String context);
+
+    /**
+     * 通过eid查询概念信息
+     * 
+     * @param eid 概念ID
+     * @return 概念实体信息
+     */
+    EntityExtractionDTO getConceptByEid(Long eid);
 
 } 

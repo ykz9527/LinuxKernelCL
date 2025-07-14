@@ -11,17 +11,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import com.cs.api.common.Result;
-import com.cs.api.dto.CodeSearchRequestDTO;
+import com.cs.api.dto.ConceptRequestDTO;
 import com.cs.api.dto.CodeSearchResultDTO;
 import com.cs.api.dto.CodeClusterResultDTO;
-import com.cs.api.dto.ConceptExplanationRequestDTO;
 import com.cs.api.dto.ConceptExplanationResultDTO;
-import com.cs.api.dto.ConceptRelationshipRequestDTO;
 import com.cs.api.dto.ConceptRelationshipResultDTO;
 import com.cs.api.dto.ConceptValidationRequestDTO;
 import com.cs.api.dto.ConceptValidationResultDTO;
-import com.cs.api.dto.TripleSearchRequestDTO;
 import com.cs.api.dto.TripleSearchResultDTO;
+import com.cs.api.dto.EntityExtractionDTO;
 import com.cs.api.service.EntityLinkService;
 
 import java.util.ArrayList;
@@ -60,20 +58,28 @@ public class EntityLinkController {
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
     public Result<List<CodeSearchResultDTO>> searchCode(
-            @Valid @RequestBody CodeSearchRequestDTO searchRequest) {
+            @Valid @RequestBody ConceptRequestDTO searchRequest) {
         logger.info("接收代码搜索请求: {}", searchRequest);
         
         try {  
-            // 执行代码搜索
+            // 1. 通过eid查询概念信息
+            EntityExtractionDTO concept = entityLinkService.getConceptByEid(searchRequest.getEid());
+            String conceptName = concept.getNameEn();
+            String context = concept.getDefinitionEn();
+            
+            logger.info("通过eid查询到概念: eid={}, concept={}, context={}", 
+                searchRequest.getEid(), conceptName, context);
+            
+            // 2. 执行代码搜索
             List<CodeSearchResultDTO> searchResults = entityLinkService.searchCode(
-                searchRequest.getConcept(), 
-                searchRequest.getContext(), 
+                conceptName, 
+                context, 
                 searchRequest.getVersion()
             );
             
             if (searchResults.isEmpty()) {
-                logger.info("未找到匹配的代码: concept={}, context={}, version={}", 
-                    searchRequest.getConcept(), searchRequest.getContext(), searchRequest.getVersion());
+                logger.info("未找到匹配的代码: eid={}, concept={}, context={}, version={}", 
+                    searchRequest.getEid(), conceptName, context, searchRequest.getVersion());
                 return Result.success("未找到匹配的代码片段", new ArrayList<>());
             }
             
@@ -104,20 +110,28 @@ public class EntityLinkController {
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
     public Result<CodeClusterResultDTO> analyzeCodeClusters(
-            @Valid @RequestBody CodeSearchRequestDTO searchRequest) {
+            @Valid @RequestBody ConceptRequestDTO searchRequest) {
         logger.info("接收代码聚类分析请求: {}", searchRequest);
         
         try {
-            // 执行代码聚类分析
+            // 1. 通过eid查询概念信息
+            EntityExtractionDTO concept = entityLinkService.getConceptByEid(searchRequest.getEid());
+            String conceptName = concept.getNameEn();
+            String context = concept.getDefinitionEn();
+            
+            logger.info("通过eid查询到概念: eid={}, concept={}, context={}", 
+                searchRequest.getEid(), conceptName, context);
+            
+            // 2. 执行代码聚类分析
             CodeClusterResultDTO clusterResult = entityLinkService.analyzeCodeClusters(
-                searchRequest.getConcept(), 
-                searchRequest.getContext(), 
+                conceptName, 
+                context, 
                 searchRequest.getVersion()
             );
             
             if (clusterResult.getTotalCodeLines() == 0) {
-                logger.info("未找到可分析的代码: concept={}, context={}, version={}", 
-                    searchRequest.getConcept(), searchRequest.getContext(), searchRequest.getVersion());
+                logger.info("未找到可分析的代码: eid={}, concept={}, context={}, version={}", 
+                    searchRequest.getEid(), conceptName, context, searchRequest.getVersion());
                 return Result.success("未找到可分析的代码", clusterResult);
             }
             
@@ -148,16 +162,25 @@ public class EntityLinkController {
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
     public Result<ConceptExplanationResultDTO> getConceptExplanation(
-            @Valid @RequestBody ConceptExplanationRequestDTO request) {
+            @Valid @RequestBody ConceptRequestDTO request) {
         logger.info("接收概念解释请求: {}", request);
         
         try {
+            // 1. 通过eid查询概念信息
+            EntityExtractionDTO concept = entityLinkService.getConceptByEid(request.getEid());
+            String conceptName = concept.getNameEn();
+            String context = concept.getDefinitionEn();
+            
+            logger.info("通过eid查询到概念: eid={}, concept={}, context={}", 
+                request.getEid(), conceptName, context);
+            
+            // 2. 执行概念解释搜索
             ConceptExplanationResultDTO result = entityLinkService.getConceptExplanation(
-                request.getConcept(),
-                request.getContext()
+                conceptName,
+                context
             );
             
-            logger.info("概念解释搜索成功: concept={}", request.getConcept());
+            logger.info("概念解释搜索成功: eid={}, concept={}", request.getEid(), conceptName);
             return Result.success(result);
             
         } catch (IllegalArgumentException e) {
@@ -183,18 +206,27 @@ public class EntityLinkController {
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
     public Result<List<TripleSearchResultDTO>> searchTriples(
-            @Valid @RequestBody TripleSearchRequestDTO request) {
+            @Valid @RequestBody ConceptRequestDTO request) {
         logger.info("接收三元组搜索请求: {}", request);
         
         try {
+            // 1. 通过eid查询概念信息
+            EntityExtractionDTO concept = entityLinkService.getConceptByEid(request.getEid());
+            String conceptName = concept.getNameEn();
+            String context = concept.getDefinitionEn();
+            
+            logger.info("通过eid查询到概念: eid={}, concept={}, context={}", 
+                request.getEid(), conceptName, context);
+            
+            // 2. 执行三元组搜索
             List<TripleSearchResultDTO> results = entityLinkService.searchTriples(
-                request.getConcept(), 
-                request.getContext()
+                conceptName, 
+                context
             );
             
             if (results.isEmpty()) {
-                logger.info("未找到匹配的三元组: concept={}, context={}", 
-                    request.getConcept(), request.getContext());
+                logger.info("未找到匹配的三元组: eid={}, concept={}, context={}", 
+                    request.getEid(), conceptName, context);
                 return Result.success("未找到包含该概念的数据", new ArrayList<>());
             }
             
@@ -224,19 +256,28 @@ public class EntityLinkController {
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
     public Result<ConceptRelationshipResultDTO> analyzeConceptRelationships(
-            @Valid @RequestBody ConceptRelationshipRequestDTO request) {
+            @Valid @RequestBody ConceptRequestDTO request) {
         logger.info("接收概念关系分析请求: {}", request);
         
         try {
+            // 1. 通过eid查询概念信息
+            EntityExtractionDTO concept = entityLinkService.getConceptByEid(request.getEid());
+            String conceptName = concept.getNameEn();
+            String context = concept.getDefinitionEn();
+            
+            logger.info("通过eid查询到概念: eid={}, concept={}, context={}", 
+                request.getEid(), conceptName, context);
+            
+            // 2. 执行概念关系分析
             ConceptRelationshipResultDTO result = entityLinkService.analyzeConceptRelationships(
-                request.getConcept(), 
-                request.getContext(),
+                conceptName, 
+                context,
                 request.getAnalysisDepth()
             );
             
             if (result.getTotalRelatedConcepts() == 0) {
-                logger.info("未发现概念关系: concept={}, context={}", 
-                    request.getConcept(), request.getContext());
+                logger.info("未发现概念关系: eid={}, concept={}, context={}", 
+                    request.getEid(), conceptName, context);
                 return Result.success("未发现明显的概念关系", result);
             }
             

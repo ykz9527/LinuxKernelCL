@@ -441,11 +441,12 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      */
     private List<CodeSearchResultDTO> processSearchResultItem(
             BootlinSearchResultDTO.SearchResultItem item, 
-            String concept, String version,String type) {
+            String concept, String commitId,String type) {
         
         List<CodeSearchResultDTO> results = new ArrayList<>();
         
-        if(!type.equals("struct") && !type.equals("function") && !type.equals("reference")){
+        if (item.getPath() == null || item.getPath().isEmpty()) {
+            logger.warn("SearchResultItem 路径为空，跳过处理");
             return results;
         }
         // 获取行号数组
@@ -456,7 +457,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             for (String lineStr : lines) {
                 int lineNumber = parseLineNumber(lineStr);
                 if (lineNumber > 0) {
-                    CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByLineNumber(item.getPath(), concept, lineNumber, kernelSourcePath,version);
+                    CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByLineNumber(item.getPath(), concept, lineNumber, kernelSourcePath, commitId);
                     if (result != null) {
                         result.setType(type);
                         results.add(result);
@@ -465,7 +466,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             }
         } else {
             // 对于没有行号的情况（如文档），创建一个通用结果
-            CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByIdentifier(item.getPath(), concept, type, kernelSourcePath,version);
+            CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByIdentifier(item.getPath(), concept, type, kernelSourcePath, commitId);
             if (result != null) {
                 result.setType(type);
                 results.add(result);
@@ -532,7 +533,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      * 创建文档信息结果 - 修正参数类型
      */
     private CodeSearchResultDTO createDocumentationResult(BootlinSearchResultDTO.SearchResultItem doc, 
-                                                          String concept, String version) {
+                                                          String concept, String commitId) {
         
         List<String> lines = doc.getLine();
         int lineNumber = 0;
@@ -542,7 +543,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
 
         if (lineNumber > 0) {
             // 如果有行号，尝试从源代码中提取注释
-            CodeSearchResultDTO result = KernelCodeAnalyzer.findCommentBlockByLineNumber(doc.getPath(), concept, lineNumber, kernelSourcePath, version);
+            CodeSearchResultDTO result = KernelCodeAnalyzer.findCommentBlockByLineNumber(doc.getPath(), concept, lineNumber, kernelSourcePath, commitId);
             if (result != null) {
                 return result;
             }
@@ -576,7 +577,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             1,
             10,
             explanation,
-            version,
+            commitId,
             "documentation"
         );
     }
@@ -1326,6 +1327,30 @@ public class EntityLinkServiceImpl implements EntityLinkService {
         }
     }
     
+    @Override
+    public EntityExtractionDTO getConceptByEid(Long eid) {
+        logger.info("通过eid查询概念: eid={}", eid);
+        
+        if (eid == null) {
+            throw new IllegalArgumentException("概念ID不能为空");
+        }
+        
+        try {
+            EntityExtractionDTO concept = entityExtractionMapper.selectById(eid);
+            if (concept == null) {
+                logger.warn("未找到eid为{}的概念", eid);
+                throw new IllegalArgumentException("未找到指定的概念: " + eid);
+            }
+            
+            logger.info("成功查询到概念: eid={}, nameEn={}", eid, concept.getNameEn());
+            return concept;
+            
+        } catch (Exception e) {
+            logger.error("查询概念失败: eid={}, error={}", eid, e.getMessage(), e);
+            throw new RuntimeException("查询概念失败: " + e.getMessage(), e);
+        }
+    }
+    
     /**
      * 构建概念验证结果
      */
@@ -1400,7 +1425,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      */
     private String buildConceptMatchingPrompt(String concept, String context, List<EntityExtractionDTO> matches) {
         StringBuilder prompt = new StringBuilder();
-        prompt.append("我需要你帮我判断哪个概念定义最匹配用户输入的概念和上下文。\n\n");
+        prompt.append("我需要你帮我判断哪个概念定义最匹配用户输入的概念和上下文。如果同时存在多个都是匹配的，则返回编号最小的那个\n\n");
         prompt.append("用户输入的概念: ").append(concept).append("\n");
         if (context != null && !context.trim().isEmpty()) {
             prompt.append("用户提供的上下文: ").append(context).append("\n");
@@ -2072,13 +2097,13 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      * @param concept 原始搜索概念
      * @param version Git版本
      */
-    private void enhanceClusterAnalysis(List<CodeClusterResultDTO.ConceptCluster> clusters, String concept, String version) {
+    private void enhanceClusterAnalysis(List<CodeClusterResultDTO.ConceptCluster> clusters, String concept, String commitId) {
         logger.info("开始为{}个聚类进行增强分析", clusters.size());
         
         for (CodeClusterResultDTO.ConceptCluster cluster : clusters) {
             try {
                 // 1. 获取完整代码片段
-                List<CodeSearchResultDTO> codeSnippets = getCompleteCodeSnippets(cluster, version);
+                List<CodeSearchResultDTO> codeSnippets = getCompleteCodeSnippets(cluster, commitId);
                 cluster.setCodeSnippets(codeSnippets);
                 logger.debug("聚类'{}'获取到{}个完整代码片段", cluster.getClusterConcept(), codeSnippets.size());
                 
@@ -2105,7 +2130,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      * @param version Git版本
      * @return 完整代码片段列表
      */
-    private List<CodeSearchResultDTO> getCompleteCodeSnippets(CodeClusterResultDTO.ConceptCluster cluster, String version) {
+    private List<CodeSearchResultDTO> getCompleteCodeSnippets(CodeClusterResultDTO.ConceptCluster cluster, String commitId) {
         List<CodeSearchResultDTO> codeSnippets = new ArrayList<>();
         
         // 1. 性能优化：限制处理的代码行数量，避免处理几百行
@@ -2123,13 +2148,13 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             
             try {
                 // 批量处理同一文件的多行
-                List<CodeSearchResultDTO> fileSnippets = getCodeSnippetsForFile(filePath, fileLines, cluster.getClusterConcept(), version);
+                List<CodeSearchResultDTO> fileSnippets = getCodeSnippetsForFile(filePath, fileLines, cluster.getClusterConcept(), commitId);
                 codeSnippets.addAll(fileSnippets);
                 logger.debug("文件{}成功获取{}个代码片段", filePath, fileSnippets.size());
             } catch (Exception e) {
                 logger.warn("处理文件{}的代码片段失败: {}", filePath, e.getMessage());
                 // 为失败的文件创建简化版本
-                List<CodeSearchResultDTO> fallbackSnippets = createFallbackSnippetsForFile(filePath, fileLines, cluster.getClusterConcept(), version);
+                List<CodeSearchResultDTO> fallbackSnippets = createFallbackSnippetsForFile(filePath, fileLines, cluster.getClusterConcept(), commitId);
                 codeSnippets.addAll(fallbackSnippets);
             }
         }
@@ -2233,10 +2258,10 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      * @return 代码片段列表
      */
     private List<CodeSearchResultDTO> getCodeSnippetsForFile(String filePath, List<CodeClusterResultDTO.CodeLineInfo> fileLines, 
-                                                             String concept, String version) {
+                                                             String concept, String commitId) {
         List<CodeSearchResultDTO> snippets = new ArrayList<>();
         
-        // 按行号排序并去重相邻行
+        // 对文件中的代码行进行预处理
         List<CodeClusterResultDTO.CodeLineInfo> processedLines = preprocessFileLines(fileLines);
         
         // 限制每个文件最多处理5个代码片段
@@ -2252,7 +2277,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                     concept,
                     codeLineInfo.getLineNumber(),
                     kernelSourcePath,
-                    version
+                    commitId
                 );
                 
                 if (completeCodeSnippet != null) {
@@ -2262,7 +2287,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                 } else {
                     // 如果获取完整片段失败，创建一个基于单行的简化版本
                     CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(
-                        codeLineInfo, concept, version);
+                        codeLineInfo, concept, commitId);
                     if (fallbackSnippet != null) {
                         snippets.add(fallbackSnippet);
                     }
@@ -2273,7 +2298,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
                     codeLineInfo.getFilePath(), codeLineInfo.getLineNumber(), e.getMessage());
                 
                 // 创建后备片段
-                CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(codeLineInfo, concept, version);
+                CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(codeLineInfo, concept, commitId);
                 if (fallbackSnippet != null) {
                     snippets.add(fallbackSnippet);
                 }
@@ -2315,16 +2340,16 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      * @param filePath 文件路径
      * @param fileLines 文件中的代码行
      * @param concept 概念名称
-     * @param version Git版本
+     * @param commitId Git提交ID
      * @return 后备代码片段列表
      */
     private List<CodeSearchResultDTO> createFallbackSnippetsForFile(String filePath, List<CodeClusterResultDTO.CodeLineInfo> fileLines, 
-                                                                    String concept, String version) {
+                                                                    String concept, String commitId) {
         List<CodeSearchResultDTO> fallbackSnippets = new ArrayList<>();
         
         // 为每行创建简化的后备片段
         for (CodeClusterResultDTO.CodeLineInfo codeLineInfo : fileLines) {
-            CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(codeLineInfo, concept, version);
+            CodeSearchResultDTO fallbackSnippet = createFallbackCodeSnippet(codeLineInfo, concept, commitId);
             if (fallbackSnippet != null) {
                 fallbackSnippets.add(fallbackSnippet);
             }
@@ -2337,7 +2362,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
      * 创建后备代码片段（当无法获取完整片段时）
      */
     private CodeSearchResultDTO createFallbackCodeSnippet(CodeClusterResultDTO.CodeLineInfo codeLineInfo, 
-                                                          String concept, String version) {
+                                                          String concept, String commitId) {
         String explanation = String.format(
             "无法获取完整代码片段，显示单行代码。文件: %s, 行号: %d",
             codeLineInfo.getFilePath(), codeLineInfo.getLineNumber()
@@ -2351,7 +2376,7 @@ public class EntityLinkServiceImpl implements EntityLinkService {
             codeLineInfo.getLineNumber(),
             codeLineInfo.getLineNumber(),
             explanation,
-            version,
+            commitId,
             "single_line"
         );
     }

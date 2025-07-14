@@ -29,10 +29,10 @@ public class CodeExtractionTest {
         
         CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByLineNumber(
             "include/linux/mm_types.h",     // 文件路径
-            "folio",                      // 目标行号
-            324,
-            kernelSourcePath,
-            "v6.14"           // 内核源码路径
+            "folio",                        // 概念名称
+            324,                           // 目标行号
+            kernelSourcePath,              // 内核源码路径
+            "7b230db3b8d373219f88a3d25c8fbbf12cc7f233"                        // 提交ID或版本标识符
         );
         
         if (result != null) {
@@ -55,10 +55,10 @@ public class CodeExtractionTest {
         
         CodeSearchResultDTO result = KernelCodeAnalyzer.findCodeElementByIdentifier(
             "include/linux/mm_types.h",     // 文件路径
-            "folio",     // 函数名
-            "struct",
-            kernelSourcePath,
-            "v6.14"           // 内核源码路径
+            "folio",                        // 标识符名称
+            "struct",                       // 类型
+            kernelSourcePath,               // 内核源码路径
+            "v6.14"                         // 提交ID或版本标识符
         );
         
         if (result != null) {
